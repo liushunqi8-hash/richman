@@ -44,22 +44,23 @@ function autoPlay(seed, maxTurns = 6000) {
 }
 
 // 1. 棋盘
-ok(BOARD_DEF.length === 28, "28格");
+ok(BOARD_DEF.length === 36, "36格");
 const kinds = BOARD_DEF.map(r => r[0]);
-ok(kinds.filter(k => k === "land").length === 16, "16块地");
-ok(kinds.filter(k => k === "chance").length === 4, "4个机会");
+ok(kinds.filter(k => k === "land").length === 22, "22块地");
+ok(kinds.filter(k => k === "chance").length === 6, "6个机会");
 ok(kinds.filter(k => k === "hub").length === 2, "2个中转站");
+const expectCount = { usa: 4, china: 4, japan: 4, aus: 3, uk: 4, arg: 3 };
 for (const d of Object.keys(DISTRICTS))
-  ok(BOARD_DEF.filter(r => r[2] === d).length === 4, `国家${d}有4城`);
+  ok(BOARD_DEF.filter(r => r[2] === d).length === expectCount[d], `国家${d}有${expectCount[d]}城`);
 // 城市名检查（用户点的：洛杉矶/旧金山等世界城市）
 const names = BOARD_DEF.map(r => r[1]).join("");
-for (const city of ["纽约", "洛杉矶", "旧金山", "芝加哥", "北京", "上海", "东京", "伦敦"])
+for (const city of ["纽约", "洛杉矶", "旧金山", "芝加哥", "北京", "上海", "东京", "伦敦", "悉尼", "布宜诺斯艾利斯"])
   ok(names.includes(city), `有城市${city}`);
 
 // 2. 网格映射
-const pts = Array.from({ length: 28 }, (_, i) => cellGridPos(i).join(","));
-ok(new Set(pts).size === 28, "格子不重叠");
-ok(pts.every(s => { const [r, c] = s.split(",").map(Number); return r >= 0 && r < 8 && c >= 0 && c < 8; }), "8x8内");
+const pts = Array.from({ length: 36 }, (_, i) => cellGridPos(i).join(","));
+ok(new Set(pts).size === 36, "格子不重叠");
+ok(pts.every(s => { const [r, c] = s.split(",").map(Number); return r >= 0 && r < 10 && c >= 0 && c < 10; }), "10x10内");
 
 // 3. 30种子完整对局
 for (let s = 0; s < 30; s++) {
@@ -132,7 +133,7 @@ console.log("同国租金叠加+3级升级 ✓");
   ok(res.hospital === HOSPITAL_FEE && g.players[0].skip === true, "医院");
   ok(g.players[0].cash === before - HOSPITAL_FEE, "扣医药费");
 
-  g.players[0].pos = 26;
+  g.players[0].pos = 34;
   g.movePlayer(0, 5);
   ok(g.players[0].cash >= START_CASH - BAIL_COST - HOSPITAL_FEE + SALARY - 1, "过起点工资");
 
@@ -302,14 +303,28 @@ console.log("中转站 ✓");
 }
 console.log("机会新卡 ✓");
 
-// 11. 起点工资1000
+// 11. 起点工资5000
 {
   const g = new Game(25);
-  g.players[0].pos = 26;
+  g.players[0].pos = 34;
   const before = g.players[0].cash;
   g.movePlayer(0, 5);
   ok(g.players[0].cash === before + 5000, "过起点+5000");
   ok(SALARY === 5000, "SALARY常量=5000");
 }
 console.log("起点工资 ✓");
+
+// 12. 新国家（澳/阿各3城）：集齐与租金叠加
+{
+  const g = new Game(26);
+  const aus = g.cells.filter(c => c.district === "aus");
+  const arg = g.cells.filter(c => c.district === "arg");
+  ok(aus.length === 3 && arg.length === 3, "澳/阿各3城");
+  aus.forEach(c => g.buy(0, c));
+  ok(g.monopoly(0, "aus"), "3城算集齐");
+  ok(g.rentOf(aus[0]) === 1950 * 3, "澳洲3城租金叠加=" + g.rentOf(aus[0]));
+  arg.forEach(c => g.buy(1, c));
+  ok(g.rentOf(arg[2]) === 900 * 3, "阿根廷3城租金叠加");
+}
+console.log("新国家 ✓");
 console.log(`全部通过（${pass}断言）`);

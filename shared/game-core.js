@@ -2,8 +2,8 @@
 // v3: 世界城市地图 / 初始 3 万 / 无限回合（破产或投降结束）/ 同国房产租金叠加 / 最高3级
 //     中转站（旅馆/公园/加油站/保险公司）/ 机会卡（免罚卡/嫁祸卡/特效药）
 
-export const BOARD_SIZE = 28;
-export const GRID_N = 8;
+export const BOARD_SIZE = 36;
+export const GRID_N = 10;
 export const START_CASH = 30000;
 export const SALARY = 5000;
 export const JAIL_TURNS = 2;
@@ -40,10 +40,12 @@ export const DISTRICTS = {
   usa:   { name: "美国", flag: "🇺🇸", color: "#4da3ff", tint: "rgba(77,163,255,0.16)",  tier: "C" },
   china: { name: "中国", flag: "🇨🇳", color: "#ff6b6b", tint: "rgba(255,107,107,0.16)", tier: "B" },
   japan: { name: "日本", flag: "🇯🇵", color: "#ffa94d", tint: "rgba(255,169,77,0.16)",  tier: "B" },
+  aus:   { name: "澳大利亚", flag: "🇦🇺", color: "#51cf66", tint: "rgba(81,207,102,0.16)", tier: "B" },
   uk:    { name: "英国", flag: "🇬🇧", color: "#b197fc", tint: "rgba(177,151,252,0.16)", tier: "A" },
+  arg:   { name: "阿根廷", flag: "🇦🇷", color: "#3bc9db", tint: "rgba(59,201,219,0.16)", tier: "A" },
 };
 
-// [种类, 名字, 国家]
+// [种类, 名字, 国家] —— 10x10 一圈 36 格
 export const BOARD_DEF = [
   ["start",    "🏁 起点",   null],
   ["land",     "纽约",     "usa"],
@@ -63,12 +65,20 @@ export const BOARD_DEF = [
   ["chance",   "❓ 机会",  null],
   ["land",     "京都",     "japan"],
   ["land",     "札幌",     "japan"],
+  ["land",     "悉尼",     "aus"],
+  ["land",     "墨尔本",   "aus"],
+  ["land",     "布里斯班", "aus"],
+  ["chance",   "❓ 机会",  null],
   ["rest",     "🏖️ 度假村", null],
   ["land",     "伦敦",     "uk"],
   ["land",     "曼彻斯特", "uk"],
   ["hub",      "🚉 中转站②", null],
   ["land",     "爱丁堡",   "uk"],
   ["land",     "利物浦",   "uk"],
+  ["land",     "布宜诺斯艾利斯", "arg"],
+  ["land",     "科尔多瓦", "arg"],
+  ["land",     "罗萨里奥", "arg"],
+  ["chance",   "❓ 机会",  null],
   ["land",     "芝加哥",   "usa"],
   ["chance",   "❓ 机会",  null],
   ["tax",      "🧾 税务局", null],
@@ -306,8 +316,10 @@ export class Game {
     if (cell.owner !== null || p.cash < price) return false;
     p.cash -= price; cell.owner = pidx;
     this.pushLog(`🏠 ${p.name} 买下「${cell.name}」（¥${price}）`);
-    if (cell.district && this.monopoly(pidx, cell.district))
-      this.pushLog(`👑 ${p.name} 集齐了${DISTRICTS[cell.district].flag}${DISTRICTS[cell.district].name}四城！`);
+    if (cell.district && this.monopoly(pidx, cell.district)) {
+      const n = this.districtCells(cell.district).length;
+      this.pushLog(`👑 ${p.name} 集齐了${DISTRICTS[cell.district].flag}${DISTRICTS[cell.district].name}${n}城！`);
+    }
     return true;
   }
   upgrade(pidx, cell) {
