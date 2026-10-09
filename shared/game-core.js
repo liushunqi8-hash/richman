@@ -1,19 +1,19 @@
 // game-core.js — 大富翁纯逻辑（无 DOM），Node / Workers / 浏览器通用
-// v3: 世界城市地图 / 初始 5 万 / 街区=国家垄断（收全区租金） / 监狱医院随机事件
+// v3: 世界城市地图 / 初始 3 万 / 无限回合（破产或投降结束）/ 同国房产租金叠加 / 最高3级
 
 export const BOARD_SIZE = 28;
 export const GRID_N = 8;
-export const START_CASH = 50000;
+export const START_CASH = 30000;
 export const SALARY = 6000;
-export const MAX_ROUNDS = 30;
 export const JAIL_TURNS = 2;
 export const BAIL_COST = 4800;
 export const HOSPITAL_FEE = 4800;
+export const MAX_LEVEL = 3;
 
 export const TIERS = {
-  A: { price: 2000,  rents: [900, 2100],  upgradeCost: 1500 },
-  B: { price: 3500,  rents: [1950, 4200], upgradeCost: 2500 },
-  C: { price: 5000,  rents: [3000, 6600], upgradeCost: 3500 },
+  A: { price: 2000,  rents: [900, 1800, 2700, 3600],     upgradeCost: 1500 },
+  B: { price: 3500,  rents: [1950, 3900, 5850, 7800],   upgradeCost: 2500 },
+  C: { price: 5000,  rents: [3000, 6000, 9000, 12000],   upgradeCost: 3500 },
 };
 
 export const DISTRICTS = {
@@ -122,23 +122,23 @@ export class Game {
     const cs = this.districtCells(d);
     return cs.length > 0 && cs.every(c => c.owner === pidx);
   }
-  // 垄断某国：踩中该国任意房产，收取该房主在该国所有房子的租金之和
+  // 租金=该房主在该国所有房产的租金之和（有一处也算，不要求垄断）
   rentOf(cell) {
     if (cell.owner === null || !cell.district) return this.baseRentOf(cell);
-    if (this.monopoly(cell.owner, cell.district)) {
-      let total = 0;
-      for (const c of this.cells)
-        if (c.kind === "land" && c.district === cell.district && c.owner === cell.owner)
-          total += this.baseRentOf(c);
-      return total;
-    }
-    return this.baseRentOf(cell);
+    let total = 0;
+    for (const c of this.cells)
+      if (c.kind === "land" && c.district === cell.district && c.owner === cell.owner)
+        total += this.baseRentOf(c);
+    return total;
+  }
+  districtPropCount(pidx, d) {
+    return this.cells.filter(c => c.kind === "land" && c.district === d && c.owner === pidx).length;
   }
   assets(pidx) {
     const p = this.players[pidx];
     let total = p.cash;
     this.cells.forEach(c => {
-      if (c.owner === pidx) { total += this.priceOf(c); if (c.level) total += this.upgradeCostOf(c); }
+      if (c.owner === pidx) { total += this.priceOf(c) + this.upgradeCostOf(c) * c.level; }
     });
     return total;
   }
@@ -165,16 +165,16 @@ export class Game {
     const p = this.players[pidx];
     if (cell.kind === "land") {
       if (cell.owner === null) return { action: "buy", cell };
-      if (cell.owner === pidx) return cell.level === 0 ? { action: "upgrade", cell } : { action: null, cell };
+      if (cell.owner === pidx) return cell.level < MAX_LEVEL ? { action: "upgrade", cell } : { action: null, cell };
       const rent = this.rentOf(cell);
-      const mono = cell.district && this.monopoly(cell.owner, cell.district);
+      const nProps = this.districtPropCount(cell.owner, cell.district);
       if (p.cash < rent) {
         p.bankrupt = true; this.winner = 1 - pidx;
         this.pushLog(`💸 ${p.name} 付不起 ¥${rent} 租金，破产！`);
         return { action: null, cell, bankrupt: true };
       }
       p.cash -= rent; this.players[cell.owner].cash += rent;
-      this.pushLog(`💰 ${p.name} 交租 ¥${rent}${mono ? "（垄断·收全区租金！）" : ""}（${cell.name}）`);
+      this.pushLog(`💰 ${p.name} 交租 ¥${rent}${nProps > 1 ? `（${cell.name}房主在该国${nProps}处房产）` : ""}（${cell.name}）`);
       return { action: null, cell, paidRent: rent };
     }
     if (cell.kind === "chance") return this._chance(pidx, depth);
@@ -231,15 +231,15 @@ export class Game {
     p.cash -= price; cell.owner = pidx;
     this.pushLog(`🏠 ${p.name} 买下「${cell.name}」（¥${price}）`);
     if (cell.district && this.monopoly(pidx, cell.district))
-      this.pushLog(`👑 ${p.name} 垄断了${DISTRICTS[cell.district].flag}${DISTRICTS[cell.district].name}！踩中该区房产将收全区租金！`);
+      this.pushLog(`👑 ${p.name} 集齐了${DISTRICTS[cell.district].flag}${DISTRICTS[cell.district].name}四城！`);
     return true;
   }
   upgrade(pidx, cell) {
     const p = this.players[pidx];
     const cost = this.upgradeCostOf(cell);
-    if (cell.owner !== pidx || cell.level !== 0 || p.cash < cost) return false;
-    p.cash -= cost; cell.level = 1;
-    this.pushLog(`⭐ ${p.name} 升级了「${cell.name}」，租金 ¥${this.rentOf(cell)}`);
+    if (cell.owner !== pidx || cell.level >= MAX_LEVEL || p.cash < cost) return false;
+    p.cash -= cost; cell.level += 1;
+    this.pushLog(`⭐ ${p.name} 升级了「${cell.name}」${"⭐".repeat(cell.level)}，租金 ¥${this.rentOf(cell)}`);
     return true;
   }
   payBail(pidx) {
@@ -265,14 +265,16 @@ export class Game {
 
   nextTurn() {
     this.turn = 1 - this.turn;
-    if (this.turn === 0) {
-      this.round += 1;
-      if (this.round > MAX_ROUNDS && this.winner === null) {
-        const a0 = this.assets(0), a1 = this.assets(1);
-        this.winner = a0 > a1 ? 0 : a1 > a0 ? 1 : "draw";
-        this.pushLog(`🏁 ${MAX_ROUNDS} 回合结束，${this.winner === "draw" ? "平局" : this.players[this.winner].name + " 总资产更高，获胜！"}`);
-      }
-    }
+    if (this.turn === 0) this.round += 1;
+  }
+
+  // 投降：对手直接获胜
+  surrender(pidx) {
+    if (this.winner !== null) return false;
+    this.winner = 1 - pidx;
+    this.players[pidx].bankrupt = true;
+    this.pushLog(`🏳️ ${this.players[pidx].name} 投降，${this.players[this.winner].name} 获胜！`);
+    return true;
   }
 
   // ---- AI（单机模式） ----

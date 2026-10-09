@@ -93,7 +93,7 @@
   <!-- 主页 -->
   <section id="screen-home" class="screen active">
     <h1>💰 大富翁 Richman · 世界版</h1>
-    <p class="sub">环游世界买地皮 · 垄断整国收全区租金 · 纯 JS 驱动</p>
+    <p class="sub">环游世界买地皮 · 同国房产租金叠加 · 无限回合直到破产或投降</p>
     <h3>① 选个形象</h3>
     <div id="avatar-picker"></div>
     <h3>② 取个名字</h3>
@@ -133,7 +133,7 @@
         <div id="stats"></div>
         <h3>📜 战报</h3>
         <div id="log"></div>
-        <div style="margin-top:10px"><button class="btn ghost" id="btn-leave-game">🏳️ 离开</button></div>
+        <div style="margin-top:10px"><button class="btn ghost" id="btn-leave-game">🏳️ 投降</button></div>
       </div>
     </div>
   </section>
@@ -232,7 +232,7 @@ function renderBoard(gj, avatarOf) {
       const crown = cell.owner !== null && gj.monopoly(cell.owner, district) ? "👑" : "";
       const label = document.createElement("div"); label.className = "land-label";
       const l1 = document.createElement("div"); l1.className = "land-name";
-      l1.textContent = `${crown}${name}${cell.level ? "⭐" : ""}`;
+      l1.textContent = `${crown}${name}${"⭐".repeat(cell.level)}`;
       const l2 = document.createElement("div"); l2.className = "land-price";
       l2.textContent = `¥${gj.priceOf(cell) / 1000}k`;
       label.appendChild(l1); label.appendChild(l2); d.appendChild(label);
@@ -282,13 +282,13 @@ function renderStats(gj, avatarOf, names) {
     const t = document.createElement("b"); t.textContent = names(pi);
     d.appendChild(t); d.appendChild(document.createElement("br"));
     const rows = [["现金", "¥" + p.cash], ["地产", gj.ownedCount(pi) + " 块"],
-                  ["垄断", gj.monopolyCount(pi) + " 国"], ["总资产", "¥" + gj.assets(pi)]];
+                  ["集齐", gj.monopolyCount(pi) + " 国"], ["总资产", "¥" + gj.assets(pi)]];
     if (p.jail > 0) rows.push(["状态", `🔒服刑(${p.jail})`]);
     rows.forEach(([k, v]) => { const r = document.createElement("div"); r.textContent = `${k}：${v}`; d.appendChild(r); });
     s.appendChild(d);
   });
   const rd = document.createElement("div"); rd.id = "round";
-  rd.textContent = `第 ${Math.min(gj.round, MAX_ROUNDS)} / ${MAX_ROUNDS} 回合`;
+  rd.textContent = `第 ${gj.round} 回合（无限回合，直到一方破产或投降）`;
   s.appendChild(rd);
 }
 
@@ -318,7 +318,7 @@ const SP = {
     $("btn-roll").textContent = "🎲 掷骰子";
     showScreen("screen-game");
     $("conn").textContent = "🤖 单机模式";
-    this.game.pushLog(`🎲 游戏开始！${S.name} 先手。经过起点 +¥${SALARY}，垄断整国收全区租金，${MAX_ROUNDS} 回合后比总资产。`);
+    this.game.pushLog(`🎲 游戏开始！${S.name} 先手。经过起点 +¥${SALARY}，同国房产租金叠加，无限回合直到一方破产或投降。`);
     this.render();
   },
   view() { return this.game.toJSON(); },
@@ -397,9 +397,10 @@ const SP = {
   askUpgrade(cell) {
     this._waiting = true; clearActions();
     const g = this.game;
-    cell.level = 1; const nr = g.rentOf(cell); cell.level = 0; // 预览升级后租金（含垄断全区规则）
+    const lv = cell.level;
+    cell.level = lv + 1; const nr = g.rentOf(cell); cell.level = lv; // 预览升1级后租金
     const tip = document.createElement("div");
-    tip.textContent = `升级「${cell.name}」花 ¥${g.upgradeCostOf(cell)}？租金 ¥${g.rentOf(cell)} → ¥${nr}`;
+    tip.textContent = `升级「${cell.name}」${"⭐".repeat(lv)}→${"⭐".repeat(lv + 1)}，花 ¥${g.upgradeCostOf(cell)}？租金 ¥${g.rentOf(cell)} → ¥${nr}`;
     $("actions").appendChild(tip);
     $("btn-roll").disabled = true;
     actionBtn(`升级！(-¥${g.upgradeCostOf(cell)})`, () => { g.upgrade(0, cell); this._waiting = false; this.render(); this.finishMove(this._lastRoll, false); });
@@ -469,37 +470,85 @@ const SP = {
     $("btn-roll").disabled = true; clearActions();
     const ov = document.createElement("div"); ov.id = "gameover";
     if (w === 0) ov.textContent = "🎉 你赢了！世界属于你！";
-    else if (w === 1) ov.textContent = "😭 你破产了……电脑笑到了最后。";
-    else ov.textContent = w === "draw" ? "🤝 平局！" : `🏁 ${MAX_ROUNDS} 回合结束，${g.players[w].name} 获胜！`;
+    else if (w === 1) ov.textContent = this._surrendered ? "🏳️ 你投降了，电脑获胜。" : "😭 你破产了……电脑笑到了最后。";
+    else ov.textContent = "🤝 平局！";
     $("actions").appendChild(ov);
     actionBtn("🔄 再来一局", () => location.reload());
     this.render();
+  },
+  surrender() {
+    this._surrendered = true;
+    this.game.surrender(0);
+    this.gameOver();
   },
 };
 
 // ================= 联机模式 =================
 const MP = {
   connect(code, isCreate) {
-    S.mode = "multi"; S.pid = S.pid || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
+    S.mode = "multi"; S.roomCode = code;
+    S.pid = S.pid || localStorage.getItem("richman_pid_" + code) || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
+    S.manualLeave = false; S.reconnectTries = 0; S._lastMsg = Date.now();
+    this._doConnect(code, isCreate, true);
+    // 半开连接看门狗：60秒无任何消息则主动断开，触发重连
+    this._stopWatchdog();
+    S._watchTimer = setInterval(() => {
+      if (S.manualLeave || S.mode !== "multi" || !S.ws) return;
+      if (Date.now() - (S._lastMsg || 0) > 60000 && S.ws.readyState === 1) {
+        try { S.ws.close(); } catch (e) { /* ignore */ }
+      }
+    }, 10000);
+    showScreen("screen-lobby");
+    this.renderLobby();
+  },
+  _doConnect(code, isCreate, first) {
     S.helloReceived = false;
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const url = `${proto}//${location.host}/ws?room=${code}&name=${encodeURIComponent(S.name)}&avatar=${S.avatar}&pid=${S.pid}&create=${isCreate ? 1 : 0}`;
     const ws = new WebSocket(url);
     S.ws = ws;
-    ws.onopen = () => { $("conn").textContent = "🟢 已连接"; };
-    ws.onclose = () => {
-      const c = $("conn"); c.textContent = "🔴 连接断开"; c.classList.add("bad");
-      if (!S.helloReceived) { toast("房间不存在，请检查房号"); showScreen("screen-home"); }
+    ws.onopen = () => {
+      S.reconnectTries = 0; S._lastMsg = Date.now();
+      try { localStorage.setItem("richman_pid_" + code, S.pid); } catch (e) { /* ignore */ }
+      this._startHeartbeat();
+      const c = $("conn"); c.textContent = "🟢 已连接"; c.classList.remove("bad");
     };
-    ws.onerror = () => { if (!S.helloReceived) toast("连接失败，请检查房号"); };
+    ws.onclose = () => {
+      this._stopHeartbeat();
+      if (S.manualLeave) return;
+      if (!S.helloReceived && S.reconnectTries === 0 && first) { toast("房间不存在，请检查房号"); showScreen("screen-home"); return; }
+      this._scheduleReconnect();
+    };
+    ws.onerror = () => { if (!S.helloReceived && S.reconnectTries === 0 && first) toast("连接失败，请检查房号"); };
     ws.onmessage = (ev) => {
+      S._lastMsg = Date.now();
       let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
       if (m.t === "hello") { S.helloReceived = true; S.seat = m.seat; S.pid = m.pid; }
+      else if (m.t === "pong") { /* 心跳回应 */ }
       else if (m.t === "state") { S.room = m.room; this.render(); }
       else if (m.t === "error") toast(m.msg);
     };
-    showScreen("screen-lobby");
-    this.renderLobby();
+  },
+  _startHeartbeat() {
+    this._stopHeartbeat();
+    S._hbTimer = setInterval(() => {
+      if (S.ws && S.ws.readyState === 1) { try { S.ws.send(JSON.stringify({ t: "ping" })); } catch (e) { /* ignore */ } }
+    }, 25000);
+  },
+  _stopHeartbeat() { if (S._hbTimer) { clearInterval(S._hbTimer); S._hbTimer = null; } },
+  _stopWatchdog() { if (S._watchTimer) { clearInterval(S._watchTimer); S._watchTimer = null; } },
+  _scheduleReconnect() {
+    if (S.manualLeave || S.mode !== "multi") return;
+    if (S._rcTimer) return; // 已在排队
+    if (S.reconnectTries >= 20) {
+      const c = $("conn"); c.textContent = "🔴 重连失败，请刷新页面"; c.classList.add("bad");
+      toast("网络重连失败，请刷新页面重新加入（房号不变）");
+      return;
+    }
+    const delay = Math.min(1500 * Math.pow(1.5, S.reconnectTries), 15000);
+    S.reconnectTries++;
+    const c = $("conn"); c.textContent = `🟡 重连中…(${S.reconnectTries})`; c.classList.add("bad");
+    S._rcTimer = setTimeout(() => { S._rcTimer = null; this._doConnect(S.roomCode, false, false); }, delay);
   },
   send(o) { if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(o)); },
   renderLobby() {
@@ -603,6 +652,9 @@ const MP = {
     this.send({ t: "roll" });
   },
   leave() {
+    S.manualLeave = true;
+    this._stopHeartbeat(); this._stopWatchdog();
+    if (S._rcTimer) { clearTimeout(S._rcTimer); S._rcTimer = null; }
     this.send({ t: "leave" });
     try { S.ws && S.ws.close(); } catch (e) {}
     location.reload();
@@ -622,8 +674,10 @@ $("btn-start").onclick = () => MP.send({ t: "start" });
 $("btn-lobby-leave").onclick = () => MP.leave();
 $("btn-roll").onclick = () => { if (S.mode === "single") SP.onRoll(); else MP.onRoll(); };
 $("btn-leave-game").onclick = () => {
-  if (S.mode === "multi") MP.leave();
-  else location.reload();
+  if (S.mode === "multi") { if (confirm("确定投降吗？对方直接获胜。")) MP.leave(); }
+  else if (S.mode === "single" && SP.game.winner === null) {
+    if (confirm("确定投降吗？电脑直接获胜。")) SP.surrender();
+  }
 };
 </script>
 </body>

@@ -80,12 +80,14 @@ export class GameRoom extends DurableObject {
 
   async webSocketMessage(ws, message) {
     const att = ws.deserializeAttachment() || {};
+    let msg;
+    try { msg = JSON.parse(message); } catch (e) { return; }
+    // 心跳：直接回 pong，不碰 storage
+    if (msg.t === "ping") { try { ws.send(JSON.stringify({ t: "pong" })); } catch (e) { /* ignore */ } return; }
     const room = await this._load();
     if (!room) return;
     const me = room.players.find(p => p.id === att.pid);
     if (!me) return;
-    let msg;
-    try { msg = JSON.parse(message); } catch (e) { return; }
     const err = (m) => { try { ws.send(JSON.stringify({ t: "error", msg: m })); } catch (e) { /* ignore */ } };
 
     if (msg.t === "leave") {
@@ -113,7 +115,7 @@ export class GameRoom extends DurableObject {
       const g = new Game();
       g.players[0].name = room.players[0].name;
       g.players[1].name = room.players[1].name;
-      g.pushLog(`🎲 游戏开始！${g.players[0].name} 先手。经过起点 +¥${SALARY}，垄断整国收全区租金，${MAX_ROUNDS} 回合后比总资产。`);
+      g.pushLog(`🎲 游戏开始！${g.players[0].name} 先手。经过起点 +¥${SALARY}，同国房产租金叠加，无限回合直到一方破产或投降。`);
       room.game = g.toJSON(); room.phase = "playing"; room.awaiting = null;
       room.lastDoubles = false; room.rolled = false; room.lastDice = null;
       await this._save(room);

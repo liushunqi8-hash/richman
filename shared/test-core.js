@@ -84,35 +84,31 @@ console.log("30种子对局 ✓");
 }
 console.log("买地/租金/破产 ✓");
 
-// 5. 垄断：收全区租金
+// 5. 同国租金叠加（不要求垄断）+ 最多升3级
 {
   const g = new Game(2);
-  const uk = g.cells.filter(c => c.district === "uk");
+  const uk = g.cells.filter(c => c.district === "uk"); // A档租金 [900,1800,2700,3600]
   ok(uk.length === 4, "英国4城");
-  uk.slice(0, 3).forEach(c => g.buy(0, c));
-  ok(!g.monopoly(0, "uk"), "3城不垄断");
-  g.buy(0, uk[3]);
-  ok(g.monopoly(0, "uk"), "4城垄断");
-  // A档租金[900,2100]，0级每块900，4块=3600
-  ok(g.rentOf(uk[0]) === 900 * 4, "垄断收全区租金=" + g.rentOf(uk[0]));
-  g.upgrade(0, uk[0]);
-  ok(g.rentOf(uk[1]) === 900 * 3 + 2100, "升级后计入全区租金");
-  // 非垄断仍是单块租金
-  const g2 = new Game(3);
-  const usa = g2.cells.filter(c => c.district === "usa");
-  g2.buy(0, usa[0]);
-  ok(g2.rentOf(usa[0]) === 3000, "非垄断单块租金");
-  // 实际收租：对手踩中垄断区，扣全区租金
+  g.buy(0, uk[0]);
+  ok(g.rentOf(uk[0]) === 900, "只有1处时收单块租金");
+  g.buy(0, uk[1]);
+  ok(g.rentOf(uk[0]) === 1800, "2处房产租金叠加");
+  ok(g.upgrade(0, uk[0]) && uk[0].level === 1, "升1级");
+  ok(g.upgrade(0, uk[0]) && uk[0].level === 2, "升2级");
+  ok(g.upgrade(0, uk[0]) && uk[0].level === 3, "升3级");
+  ok(!g.upgrade(0, uk[0]) && uk[0].level === 3, "不能升第4级");
+  ok(g.rentOf(uk[1]) === 3600 + 900, "升级后叠加计入");
   const idx = g.cells.indexOf(uk[1]);
   g.players[1].pos = idx;
-  const cashBefore = g.players[1].cash, ownerBefore = g.players[0].cash;
+  const cb = g.players[1].cash, ob = g.players[0].cash;
   const rr = g.resolveLanding(1, uk[1]);
-  const expectRent = 900 * 3 + 2100;
-  ok(rr.paidRent === expectRent, "实收全区租金=" + rr.paidRent);
-  ok(g.players[1].cash === cashBefore - expectRent, "对手扣钱");
-  ok(g.players[0].cash === ownerBefore + expectRent, "房主收钱");
+  ok(rr.paidRent === 4500, "实收叠加租金=" + rr.paidRent);
+  ok(g.players[1].cash === cb - 4500 && g.players[0].cash === ob + 4500, "双方账目正确");
+  // 集齐仍给皇冠
+  g.buy(0, uk[2]); g.buy(0, uk[3]);
+  ok(g.monopoly(0, "uk"), "4城仍算集齐");
 }
-console.log("国家垄断收全区租金 ✓");
+console.log("同国租金叠加+3级升级 ✓");
 
 // 6. 监狱/医院/工资/序列化
 {
@@ -156,4 +152,13 @@ console.log("监狱/医院/工资/序列化 ✓");
   ok(doubles > 50 && doubles < 160, `双骰概率≈1/6，实测${doubles}/600`);
 }
 console.log("双骰子 ✓");
+
+// 8. 投降
+{
+  const g = new Game(9);
+  ok(g.surrender(0) && g.winner === 1, "投降后对手获胜");
+  ok(g.players[0].bankrupt, "投降算破产");
+  ok(!g.surrender(1), "已结束不能再投降");
+}
+console.log("投降 ✓");
 console.log(`全部通过（${pass}断言）`);
