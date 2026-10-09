@@ -1,14 +1,34 @@
 // game-core.js — 大富翁纯逻辑（无 DOM），Node / Workers / 浏览器通用
 // v3: 世界城市地图 / 初始 3 万 / 无限回合（破产或投降结束）/ 同国房产租金叠加 / 最高3级
+//     中转站（旅馆/公园/加油站/保险公司）/ 机会卡（免罚卡/嫁祸卡/特效药）
 
 export const BOARD_SIZE = 28;
 export const GRID_N = 8;
 export const START_CASH = 30000;
-export const SALARY = 6000;
+export const SALARY = 1000;
 export const JAIL_TURNS = 2;
 export const BAIL_COST = 4800;
 export const HOSPITAL_FEE = 4800;
 export const MAX_LEVEL = 3;
+
+// 中转站建筑：cost 建造费，toll 对手踩中过路费
+export const HUB_BUILDINGS = {
+  hotel:     { name: "旅馆",   emoji: "🏨", cost: 8000,  toll: 3000, desc: "对手强制停留3天" },
+  park:      { name: "公园",   emoji: "🏞️", cost: 8000,  toll: 0,    desc: "名下房产租金+30%" },
+  gas:       { name: "加油站", emoji: "⛽", cost: 10000, toll: 5000, desc: "对手下次掷骰+2" },
+  insurance: { name: "保险公司", emoji: "🏦", cost: 10000, toll: 6000, desc: "对手3步内出事赔¥8000" },
+};
+export const PARK_RENT_BONUS = 0.3;
+export const INSURANCE_PAYOUT = 8000;
+export const INSURANCE_TURNS = 3;
+export const HOTEL_STAY = 3;
+export const GAS_BOOST = 2;
+
+export const ITEM_DEFS = {
+  jail_free: { name: "免罚卡", emoji: "🎫", desc: "进监狱时自动免罪" },
+  frame:     { name: "嫁祸卡", emoji: "😈", desc: "回合内使用，对手进监狱" },
+  medicine:  { name: "特效药", emoji: "💊", desc: "进医院时自动痊愈" },
+};
 
 export const TIERS = {
   A: { price: 2000,  rents: [900, 1800, 2700, 3600],     upgradeCost: 1500 },
@@ -33,7 +53,7 @@ export const BOARD_DEF = [
   ["tax",      "🧾 税务局", null],
   ["land",     "北京",     "china"],
   ["land",     "上海",     "china"],
-  ["chance",   "❓ 机会",  null],
+  ["hub",      "🚉 中转站①", null],
   ["land",     "广州",     "china"],
   ["jail",     "🚔 监狱",  null],
   ["land",     "深圳",     "china"],
@@ -46,7 +66,7 @@ export const BOARD_DEF = [
   ["rest",     "🏖️ 度假村", null],
   ["land",     "伦敦",     "uk"],
   ["land",     "曼彻斯特", "uk"],
-  ["chance",   "❓ 机会",  null],
+  ["hub",      "🚉 中转站②", null],
   ["land",     "爱丁堡",   "uk"],
   ["land",     "利物浦",   "uk"],
   ["land",     "芝加哥",   "usa"],
@@ -55,8 +75,8 @@ export const BOARD_DEF = [
   ["chance",   "❓ 机会",  null],
 ];
 
-const CHANCE_KEYS = ["bonus", "fine", "forward", "back", "lottery", "robbed"];
-const CHANCE_WEIGHTS = [3, 3, 2, 2, 1, 1];
+const CHANCE_KEYS = ["bonus", "fine", "forward", "back", "lottery", "robbed", "jail_free", "frame", "medicine"];
+const CHANCE_WEIGHTS = [3, 3, 2, 2, 1, 1, 1, 1, 1];
 
 // 确定性 RNG（测试用），线上用 Date.now() 做种子
 export function mulberry32(seed) {
@@ -75,11 +95,11 @@ export class Game {
     this.rngCalls = 0;
     this.rng = mulberry32(this.seed);
     this.cells = BOARD_DEF.map(([kind, name, district]) => ({
-      kind, name, district, owner: null, level: 0,
+      kind, name, district, owner: null, level: 0, building: null,
     }));
     this.players = [
-      { name: "玩家1", cash: START_CASH, pos: 0, skip: false, jail: 0, bankrupt: false },
-      { name: "玩家2", cash: START_CASH, pos: 0, skip: false, jail: 0, bankrupt: false },
+      { name: "玩家1", cash: START_CASH, pos: 0, skip: false, jail: 0, bankrupt: false, items: [], boost: 0, insured: null, hotelStay: 0 },
+      { name: "玩家2", cash: START_CASH, pos: 0, skip: false, jail: 0, bankrupt: false, items: [], boost: 0, insured: null, hotelStay: 0 },
     ];
     this.turn = 0;
     this.round = 1;
@@ -94,7 +114,7 @@ export class Game {
   toJSON() {
     return {
       seed: this.seed, rngCalls: this.rngCalls,
-      cells: this.cells.map(c => ({ owner: c.owner, level: c.level })),
+      cells: this.cells.map(c => ({ owner: c.owner, level: c.level, building: c.building })),
       players: this.players.map(p => ({ ...p })),
       turn: this.turn, round: this.round, winner: this.winner,
       lastRoll: this.lastRoll, log: this.log.slice(-150),
@@ -103,8 +123,8 @@ export class Game {
   static fromJSON(d) {
     const g = new Game(d.seed);
     for (let i = 0; i < (d.rngCalls || 0); i++) g._rand(); // 快进 RNG，保证骰子不重播
-    d.cells.forEach((c, i) => { g.cells[i].owner = c.owner; g.cells[i].level = c.level; });
-    g.players = d.players.map(p => ({ ...p }));
+    d.cells.forEach((c, i) => { g.cells[i].owner = c.owner; g.cells[i].level = c.level; g.cells[i].building = c.building || null; });
+    g.players = d.players.map(p => ({ items: [], boost: 0, insured: null, hotelStay: 0, ...p }));
     g.turn = d.turn; g.round = d.round; g.winner = d.winner;
     g.lastRoll = d.lastRoll; g.log = d.log || [];
     return g;
@@ -122,14 +142,18 @@ export class Game {
     const cs = this.districtCells(d);
     return cs.length > 0 && cs.every(c => c.owner === pidx);
   }
-  // 租金=该房主在该国所有房产的租金之和（有一处也算，不要求垄断）
+  // 租金=该房主在该国所有房产的租金之和（有一处也算，不要求垄断）；有公园则+30%
   rentOf(cell) {
     if (cell.owner === null || !cell.district) return this.baseRentOf(cell);
     let total = 0;
     for (const c of this.cells)
       if (c.kind === "land" && c.district === cell.district && c.owner === cell.owner)
         total += this.baseRentOf(c);
+    if (this.hasBuilding(cell.owner, "park")) total = Math.round(total * (1 + PARK_RENT_BONUS));
     return total;
+  }
+  hasBuilding(pidx, b) {
+    return this.cells.some(c => c.kind === "hub" && c.owner === pidx && c.building === b);
   }
   districtPropCount(pidx, d) {
     return this.cells.filter(c => c.kind === "land" && c.district === d && c.owner === pidx).length;
@@ -138,19 +162,28 @@ export class Game {
     const p = this.players[pidx];
     let total = p.cash;
     this.cells.forEach(c => {
-      if (c.owner === pidx) { total += this.priceOf(c) + this.upgradeCostOf(c) * c.level; }
+      if (c.owner !== pidx) return;
+      if (c.kind === "hub") total += HUB_BUILDINGS[c.building].cost;
+      else total += this.priceOf(c) + this.upgradeCostOf(c) * c.level;
     });
     return total;
   }
   ownedCount(pidx) { return this.cells.filter(c => c.owner === pidx).length; }
   monopolyCount(pidx) { return Object.keys(DISTRICTS).filter(d => this.monopoly(pidx, d)).length; }
 
-  // 双骰子：返回 {d1, d2, total, doubles}
+  // 双骰子：返回 {d1, d2, total, doubles, boosted}
   roll() {
+    const p = this.players[this.turn];
+    if (p.insured && p.insured.turns > 0) {
+      p.insured.turns -= 1;
+      if (p.insured.turns <= 0) { p.insured = null; this.pushLog(`🏦 ${p.name} 的保险到期了`); }
+    }
     const d1 = 1 + Math.floor(this._rand() * 6);
     const d2 = 1 + Math.floor(this._rand() * 6);
+    let total = d1 + d2, boosted = 0;
+    if (p.boost > 0) { boosted = p.boost; total += boosted; p.boost = 0; this.pushLog(`⛽ ${p.name} 加速 +${boosted}！`); }
     this.lastRoll = [d1, d2];
-    return { d1, d2, total: d1 + d2, doubles: d1 === d2 };
+    return { d1, d2, total, doubles: d1 === d2, boosted };
   }
 
   movePlayer(pidx, steps) {
@@ -177,6 +210,32 @@ export class Game {
       this.pushLog(`💰 ${p.name} 交租 ¥${rent}${nProps > 1 ? `（${cell.name}房主在该国${nProps}处房产）` : ""}（${cell.name}）`);
       return { action: null, cell, paidRent: rent };
     }
+    if (cell.kind === "hub") {
+      if (cell.owner === null) return { action: "buy_hub", cell };
+      if (cell.owner === pidx) return { action: null, cell };
+      const b = HUB_BUILDINGS[cell.building];
+      const owner = this.players[cell.owner];
+      if (b.toll > 0) {
+        if (p.cash < b.toll) {
+          p.bankrupt = true; this.winner = 1 - pidx;
+          this.pushLog(`💸 ${p.name} 付不起${b.name}过路费 ¥${b.toll}，破产！`);
+          return { action: null, cell, bankrupt: true };
+        }
+        p.cash -= b.toll; owner.cash += b.toll;
+        this.pushLog(`💰 ${p.name} 支付${b.name}过路费 ¥${b.toll}`);
+      }
+      if (cell.building === "hotel") {
+        p.hotelStay = HOTEL_STAY;
+        this.pushLog(`🏨 ${p.name} 入住旅馆，强制停留 ${HOTEL_STAY} 天！`);
+      } else if (cell.building === "gas") {
+        p.boost = GAS_BOOST;
+        this.pushLog(`⛽ ${p.name} 加满油，下次掷骰 +${GAS_BOOST}`);
+      } else if (cell.building === "insurance") {
+        p.insured = { turns: INSURANCE_TURNS, by: cell.owner };
+        this.pushLog(`🏦 ${p.name} 获赠保险：${INSURANCE_TURNS}步内进监狱/医院/被抢，${owner.name}赔付 ¥${INSURANCE_PAYOUT}`);
+      }
+      return { action: null, cell, hub: cell.building };
+    }
     if (cell.kind === "chance") return this._chance(pidx, depth);
     if (cell.kind === "tax") {
       const fee = Math.max(1500, Math.floor(p.cash / 10));
@@ -190,15 +249,29 @@ export class Game {
       return { action: null, cell, rest: true };
     }
     if (cell.kind === "jail") {
+      const fi = p.items.indexOf("jail_free");
+      if (fi >= 0) {
+        p.items.splice(fi, 1);
+        this.pushLog(`🎫 ${p.name} 使用免罚卡，免于牢狱之灾！`);
+        return { action: null, cell, usedCard: "jail_free" };
+      }
       if (p.cash >= BAIL_COST) return { action: "jail_choice", cell };
       p.jail = JAIL_TURNS;
       this.pushLog(`🚔 ${p.name} 入狱服刑 ${JAIL_TURNS} 回合（交不起保释金）`);
+      this._maybeInsurance(pidx, "入狱");
       return { action: null, cell, jailed: true };
     }
     if (cell.kind === "hospital") {
+      const mi = p.items.indexOf("medicine");
+      if (mi >= 0) {
+        p.items.splice(mi, 1);
+        this.pushLog(`💊 ${p.name} 服用特效药，瞬间痊愈！`);
+        return { action: null, cell, usedCard: "medicine" };
+      }
       const fee = Math.min(p.cash, HOSPITAL_FEE);
       p.cash -= fee; p.skip = true;
       this.pushLog(`🏥 ${p.name} 住院，医药费 ¥${fee}，下回合休息`);
+      this._maybeInsurance(pidx, "住院");
       return { action: null, cell, hospital: fee };
     }
     return { action: null, cell }; // start
@@ -212,9 +285,12 @@ export class Game {
     for (let i = 0; i < CHANCE_KEYS.length; i++) { acc += CHANCE_WEIGHTS[i] / total; if (r <= acc) { evt = CHANCE_KEYS[i]; break; } }
     const done = (event) => ({ action: null, cell: this.cells[p.pos], event });
     if (evt === "bonus") { p.cash += 4800; this.pushLog(`❓ ${p.name}：📈 股市大涨，+¥4800`); return done(); }
-    if (evt === "fine") { p.cash = Math.max(0, p.cash - 3000); this.pushLog(`❓ ${p.name}：🧾 收到罚单，-¥3000`); return done(); }
+    if (evt === "fine") { p.cash = Math.max(0, p.cash - 3000); this.pushLog(`❓ ${p.name}：🧾 收到罚单，-¥3000`); this._maybeInsurance(pidx, "被罚款"); return done(); }
     if (evt === "lottery") { p.cash += 9000; this.pushLog(`❓ ${p.name}：🎰 彩票中奖！+¥9000`); return done(); }
-    if (evt === "robbed") { p.cash = Math.max(0, p.cash - 4800); this.pushLog(`❓ ${p.name}：🥷 深夜被抢，-¥4800`); return done(); }
+    if (evt === "robbed") { p.cash = Math.max(0, p.cash - 4800); this.pushLog(`❓ ${p.name}：🥷 深夜被抢，-¥4800`); this._maybeInsurance(pidx, "被抢劫"); return done(); }
+    if (evt === "jail_free") { p.items.push("jail_free"); this.pushLog(`❓ ${p.name}：🎫 获得【免罚卡】！进监狱时自动免罪`); return done(); }
+    if (evt === "frame") { p.items.push("frame"); this.pushLog(`❓ ${p.name}：😈 获得【嫁祸卡】！回合内可使用，让对手进监狱`); return done(); }
+    if (evt === "medicine") { p.items.push("medicine"); this.pushLog(`❓ ${p.name}：💊 获得【特效药】！进医院时自动痊愈`); return done(); }
     const steps = evt === "forward" ? 3 : -3;
     const label = evt === "forward" ? "🍀 好运降临，前进 3 格" : "🍌 踩到香蕉皮，后退 3 格";
     this.pushLog(`❓ ${p.name}：${label}`);
@@ -242,6 +318,42 @@ export class Game {
     this.pushLog(`⭐ ${p.name} 升级了「${cell.name}」${"⭐".repeat(cell.level)}，租金 ¥${this.rentOf(cell)}`);
     return true;
   }
+  // 中转站建造
+  buildHub(pidx, cell, building) {
+    const p = this.players[pidx];
+    const b = HUB_BUILDINGS[building];
+    if (!b || cell.kind !== "hub" || cell.owner !== null || p.cash < b.cost) return false;
+    p.cash -= b.cost; cell.owner = pidx; cell.building = building;
+    this.pushLog(`${b.emoji} ${p.name} 在${cell.name}建造了【${b.name}】（¥${b.cost}）${b.toll ? `，过路费 ¥${b.toll}` : ""}`);
+    return true;
+  }
+  // 嫁祸卡：对手进监狱（对方有免罚卡则抵挡）
+  useFrame(pidx) {
+    const p = this.players[pidx];
+    const fi = p.items.indexOf("frame");
+    if (fi < 0 || this.winner !== null) return false;
+    p.items.splice(fi, 1);
+    const t = this.players[1 - pidx];
+    const gi = t.items.indexOf("jail_free");
+    if (gi >= 0) {
+      t.items.splice(gi, 1);
+      this.pushLog(`😈 ${p.name} 想嫁祸 ${t.name}，${t.name}亮出免罚卡躲过一劫！`);
+      return true;
+    }
+    t.jail = JAIL_TURNS;
+    this.pushLog(`😈 ${p.name} 使用嫁祸卡！${t.name} 被关进监狱 ${JAIL_TURNS} 回合`);
+    return true;
+  }
+  // 保险理赔：3步内出事，保险公司店主赔付（一次性，不会赔到破产）
+  _maybeInsurance(pidx, reason) {
+    const p = this.players[pidx];
+    if (!p.insured || this.winner !== null) return;
+    const owner = this.players[p.insured.by];
+    const pay = Math.min(INSURANCE_PAYOUT, owner.cash);
+    owner.cash -= pay; p.cash += pay;
+    p.insured = null;
+    this.pushLog(`🏦 保险理赔！${p.name}${reason}，${owner.name}赔付 ¥${pay}`);
+  }
   payBail(pidx) {
     const p = this.players[pidx];
     if (p.cash < BAIL_COST) return false;
@@ -253,12 +365,14 @@ export class Game {
     const p = this.players[pidx];
     p.jail = JAIL_TURNS;
     this.pushLog(`🔒 ${p.name} 选择坐满 ${JAIL_TURNS} 回合`);
+    this._maybeInsurance(pidx, "入狱服刑");
   }
 
-  // 回合开始时的自动跳过（坐牢/休息），返回 true 表示跳过
+  // 回合开始时的自动跳过（坐牢/旅馆/休息），返回 true 表示跳过
   autoSkip(pidx) {
     const p = this.players[pidx];
     if (p.jail > 0) { p.jail -= 1; this.pushLog(`🔒 ${p.name} 还在服刑（剩余 ${p.jail} 回合）`); return true; }
+    if (p.hotelStay > 0) { p.hotelStay -= 1; this.pushLog(`🏨 ${p.name} 在旅馆休息（剩余 ${p.hotelStay} 天）`); return true; }
     if (p.skip) { p.skip = false; this.pushLog(`🏖️ ${p.name} 在度假村/医院休息，本回合跳过`); return true; }
     return false;
   }
@@ -281,6 +395,13 @@ export class Game {
   aiBuy(pidx, cell) { return this.players[pidx].cash - this.priceOf(cell) >= 12000; }
   aiUpgrade(pidx, cell) { return this.players[pidx].cash - this.upgradeCostOf(cell) >= 20000; }
   aiBail(pidx) { return this.players[pidx].cash - BAIL_COST >= 16000; }
+  aiHubBuilding(pidx) {
+    const cash = this.players[pidx].cash;
+    for (const key of ["insurance", "gas", "hotel", "park"])
+      if (cash - HUB_BUILDINGS[key].cost >= 15000) return key;
+    return null;
+  }
+  aiUseFrame(pidx) { return this.players[pidx].items.includes("frame") && this._rand() < 0.4; }
 }
 
 export function cellGridPos(i, n = GRID_N) {

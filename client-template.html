@@ -93,7 +93,7 @@
   <!-- 主页 -->
   <section id="screen-home" class="screen active">
     <h1>💰 大富翁 Richman · 世界版</h1>
-    <p class="sub">环游世界买地皮 · 同国房产租金叠加 · 无限回合直到破产或投降</p>
+    <p class="sub">环游世界买地皮 · 中转站经营 · 无限回合直到破产或投降</p>
     <h3>① 选个形象</h3>
     <div id="avatar-picker"></div>
     <h3>② 取个名字</h3>
@@ -238,10 +238,17 @@ function renderBoard(gj, avatarOf) {
       label.appendChild(l1); label.appendChild(l2); d.appendChild(label);
     } else {
       const nm = document.createElement("div"); nm.className = "cname";
-      const ej = kind === "chance" ? "❓" : kind === "tax" ? "🧾" : kind === "rest" ? "🏖️" : kind === "jail" ? "🚔" : kind === "hospital" ? "🏥" : kind === "start" ? "🏁" : "";
-      nm.textContent = `${ej}${name}`;
+      const info = document.createElement("div"); info.className = "cinfo";
+      if (kind === "hub" && cell.building) {
+        const b = HUB_BUILDINGS[cell.building];
+        nm.textContent = `${b.emoji}${b.name}`;
+        info.textContent = b.toll > 0 ? `过路¥${b.toll}` : b.desc;
+      } else {
+        const ej = kind === "chance" ? "❓" : kind === "tax" ? "🧾" : kind === "rest" ? "🏖️" : kind === "jail" ? "🚔" : kind === "hospital" ? "🏥" : kind === "start" ? "🏁" : kind === "hub" ? "🚉" : "";
+        nm.textContent = `${ej}${name}`;
+      }
       d.appendChild(nm);
-      d.appendChild(Object.assign(document.createElement("div"), { className: "cinfo" }));
+      d.appendChild(info);
     }
     const tk = document.createElement("div"); tk.className = "tokens";
     gj.players.forEach((p, pi) => {
@@ -284,6 +291,13 @@ function renderStats(gj, avatarOf, names) {
     const rows = [["现金", "¥" + p.cash], ["地产", gj.ownedCount(pi) + " 块"],
                   ["集齐", gj.monopolyCount(pi) + " 国"], ["总资产", "¥" + gj.assets(pi)]];
     if (p.jail > 0) rows.push(["状态", `🔒服刑(${p.jail})`]);
+    if (p.hotelStay > 0) rows.push(["状态", `🏨旅馆(${p.hotelStay}天)`]);
+    const itemStr = ["jail_free", "frame", "medicine"]
+      .map(k => { const n = (p.items || []).filter(x => x === k).length; return n ? `${ITEM_DEFS[k].emoji}${ITEM_DEFS[k].name}×${n}` : ""; })
+      .filter(Boolean).join(" ");
+    if (itemStr) rows.push(["道具", itemStr]);
+    const buffStr = [p.boost > 0 ? "⛽加速" : "", p.insured ? `🏦保险(${p.insured.turns}步)` : ""].filter(Boolean).join(" ");
+    if (buffStr) rows.push(["增益", buffStr]);
     rows.forEach(([k, v]) => { const r = document.createElement("div"); r.textContent = `${k}：${v}`; d.appendChild(r); });
     s.appendChild(d);
   });
@@ -332,10 +346,19 @@ const SP = {
     $("btn-roll").disabled = !(this.game.turn === 0 && this.game.winner === null);
     const w = this.game.winner;
     $("turn-banner").textContent = w !== null ? "🏁 游戏结束" : (this.game.turn === 0 ? `▶ 轮到你（${S.name}）` : "▶ 电脑回合…");
+    const old = $("frame-btn"); if (old) old.remove();
+    if (this.game.turn === 0 && w === null && !this._rolled && !this._waiting &&
+        this.game.players[0].items.includes("frame")) {
+      const b = document.createElement("button");
+      b.id = "frame-btn"; b.className = "btn";
+      b.textContent = "😈 使用嫁祸卡（电脑进监狱）";
+      b.onclick = () => { this.game.useFrame(0); this.render(); };
+      $("actions").appendChild(b);
+    }
   },
   blocked() {
     const p = this.game.players[0];
-    if (p.jail > 0 || p.skip) { this.game.autoSkip(0); this.render(); this.endTurn(); return true; }
+    if (p.jail > 0 || p.skip || p.hotelStay > 0) { this.game.autoSkip(0); this.render(); this.endTurn(); return true; }
     return false;
   },
   onRoll() {
@@ -362,6 +385,7 @@ const SP = {
     if (res.chained) { this.settle(pidx, res.chained, rollInfo); if (g.winner !== null) return; if (this._waiting) return; }
     const a = res.action, cell = res.cell;
     if (a === "buy") return this.askBuy(cell);
+    if (a === "buy_hub") return this.askBuyHub(cell);
     if (a === "upgrade") return this.askUpgrade(cell);
     if (a === "jail_choice") return this.askJail();
     this.render();
@@ -394,6 +418,20 @@ const SP = {
     actionBtn(`买！(-¥${g.priceOf(cell)})`, () => { g.buy(0, cell); this._waiting = false; this.render(); this.finishMove(this._lastRoll, false); });
     actionBtn("放弃", () => { g.pushLog(`🚶 你放弃购买「${cell.name}」`); this._waiting = false; this.render(); this.finishMove(this._lastRoll, false); });
   },
+  askBuyHub(cell) {
+    this._waiting = true; clearActions();
+    const tip = document.createElement("div");
+    tip.textContent = `🚉 ${cell.name}无人认领！买下并建造一个设施：`;
+    $("actions").appendChild(tip);
+    $("btn-roll").disabled = true;
+    Object.entries(HUB_BUILDINGS).forEach(([key, b]) => {
+      actionBtn(`${b.emoji}${b.name}（-¥${b.cost}）${b.toll ? `·过路¥${b.toll}` : ""}·${b.desc}`, () => {
+        if (this.game.buildHub(0, cell, key)) { this._waiting = false; this.render(); this.finishMove(this._lastRoll, false); }
+        else toast("现金不足，建不起");
+      });
+    });
+    actionBtn("放弃", () => { this.game.pushLog(`🚶 你放弃了${cell.name}`); this._waiting = false; this.render(); this.finishMove(this._lastRoll, false); });
+  },
   askUpgrade(cell) {
     this._waiting = true; clearActions();
     const g = this.game;
@@ -419,6 +457,8 @@ const SP = {
     clearActions();
     $("btn-roll").textContent = "🎲 掷骰子";
     actionBtn("⏭️ 结束回合（电脑行动）", () => this.endTurn());
+    if (this.game.players[0].items.includes("frame") && this.game.winner === null)
+      actionBtn("😈 使用嫁祸卡（电脑进监狱）", () => { this.game.useFrame(0); this.render(); this.showEndTurn(); });
     $("btn-roll").disabled = true;
   },
   endTurn() {
@@ -433,6 +473,7 @@ const SP = {
   },
   aiTurn() {
     const g = this.game;
+    if (g.aiUseFrame(1)) g.useFrame(1);
     let guard = 0, again = true;
     while (again && guard++ < 10 && g.winner === null) {
       again = false;
@@ -461,6 +502,7 @@ const SP = {
     if (res.chained) this.settleAI(res.chained);
     const a = res.action, cell = res.cell;
     if (a === "buy" && g.aiBuy(1, cell)) g.buy(1, cell);
+    else if (a === "buy_hub") { const b = g.aiHubBuilding(1); if (b) g.buildHub(1, cell, b); else g.pushLog(`🚶 电脑放弃了${cell.name}`); }
     else if (a === "upgrade" && g.aiUpgrade(1, cell)) g.upgrade(1, cell);
     else if (a === "jail_choice") { if (g.aiBail(1)) g.payBail(1); else g.serveJail(1); }
     this.render();
@@ -608,6 +650,14 @@ const MP = {
         $("actions").appendChild(tip);
         actionBtn(`交保释金（-¥${BAIL_COST}）`, () => this.send({ t: "bail" }));
         actionBtn(`坐牢（${JAIL_TURNS}回合）`, () => this.send({ t: "serve" }));
+      } else if (aw.kind === "buy_hub") {
+        const tip = document.createElement("div");
+        tip.textContent = `🚉 ${cell.name}无人认领！买下并建造一个设施：`;
+        $("actions").appendChild(tip);
+        Object.entries(HUB_BUILDINGS).forEach(([key, b]) => {
+          actionBtn(`${b.emoji}${b.name}（-¥${b.cost}）${b.toll ? `·过路¥${b.toll}` : ""}·${b.desc}`, () => this.send({ t: "buy_hub", building: key }));
+        });
+        actionBtn("放弃", () => this.send({ t: "skip_hub" }));
       }
     } else if (myTurn) {
       $("turn-banner").textContent = `▶ 轮到你，${S.name}！`;
@@ -621,6 +671,8 @@ const MP = {
         $("btn-roll").disabled = true;
         actionBtn("⏭️ 结束回合", () => { S.myRolled = false; this.send({ t: "end_turn" }); });
       }
+      if ((gj.players[S.seat].items || []).includes("frame"))
+        actionBtn("😈 使用嫁祸卡（对手进监狱）", () => this.send({ t: "use_frame" }));
     } else {
       const other = r.players.find(x => x.seat !== S.seat);
       $("turn-banner").textContent = `⏳ 等待 ${other ? other.name : "对手"} 行动…`;

@@ -152,7 +152,15 @@ export class GameRoom extends DurableObject {
       return this._broadcast(room);
     }
 
-    if (["buy", "skip_buy", "upgrade", "skip_upgrade", "bail", "serve"].includes(msg.t)) {
+    if (msg.t === "use_frame") {
+      if (g.turn !== me.seat || room.awaiting || g.winner !== null) return err("现在不能用嫁祸卡");
+      if (!g.useFrame(me.seat)) return err("使用失败");
+      room.game = g.toJSON();
+      await this._save(room);
+      return this._broadcast(room);
+    }
+
+    if (["buy", "skip_buy", "upgrade", "skip_upgrade", "bail", "serve", "buy_hub", "skip_hub"].includes(msg.t)) {
       if (!room.awaiting || room.awaiting.seat !== me.seat) return err("现在不能做这个决定");
       const kind = room.awaiting.kind;
       const cell = g.cells[room.awaiting.cellIdx];
@@ -164,6 +172,8 @@ export class GameRoom extends DurableObject {
       else if (msg.t === "skip_upgrade" && kind === "upgrade") { g.pushLog(`🚶 ${g.players[seat].name} 跳过升级`); done = true; }
       else if (msg.t === "bail" && kind === "jail_choice") done = g.payBail(seat);
       else if (msg.t === "serve" && kind === "jail_choice") { g.serveJail(seat); done = true; }
+      else if (msg.t === "buy_hub" && kind === "buy_hub") done = g.buildHub(seat, cell, msg.building);
+      else if (msg.t === "skip_hub" && kind === "buy_hub") { g.pushLog(`🚶 ${g.players[seat].name} 放弃了${cell.name}`); done = true; }
       if (!done) return err("操作失败（现金不足？）");
       room.awaiting = null;
       room.game = g.toJSON();
