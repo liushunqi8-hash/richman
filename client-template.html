@@ -109,7 +109,7 @@
       <input id="room-code-input" placeholder="房号" maxlength="6">
       <button class="btn" id="btn-join">🔑 加入房间</button>
     </div>
-    <p class="hint">联机：一个人点「创建房间」，把 6 位房号发给朋友，朋友输入房号加入，房主点开始。</p>
+    <p class="hint">联机：一个人点「创建房间」，把 6 位房号发给朋友（最多 5 人），朋友输入房号加入，房主点开始。</p>
   </section>
 
   <!-- 大厅 -->
@@ -150,7 +150,7 @@ const AVATAR_NAMES = { nailong: "奶龙", naiwa: "奶蛙", lulu: "噜噜", doro:
 const AVATAR_ORDER = ["nailong", "naiwa", "lulu", "doro", "maodie", "weini", "astro", "fox", "panda", "robot"];
 
 const $ = (id) => document.getElementById(id);
-const OWNER_COLOR = ["#4da3ff", "#ff6b6b"];
+const OWNER_COLOR = ["#4da3ff", "#ff6b6b", "#51cf66", "#ffd43b", "#b197fc"];
 const DICE_FACES = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
 let diceTimer = null;
 // 骰子滚动动画：随机闪 7 次后停在 d1/d2，cb 可选
@@ -272,7 +272,7 @@ function renderBoard(gj, avatarOf) {
     im.src = AVATARS[avatarOf(pi)] || AVATARS.astro; im.alt = p.name;
     const tx = document.createElement("div");
     const nm = document.createElement("div"); nm.className = "cp-name";
-    nm.textContent = (p.jail > 0 ? "🔒" : "") + p.name;
+    nm.textContent = (p.eliminated ? "💀" : p.jail > 0 ? "🔒" : "") + p.name;
     const pos = document.createElement("div"); pos.className = "cp-pos";
     pos.textContent = "📍 " + gj.cells[p.pos].name.replace(/^\S+\s+/, "");
     tx.appendChild(nm); tx.appendChild(pos);
@@ -293,6 +293,7 @@ function renderStats(gj, avatarOf, names) {
     const rows = [["现金", "¥" + p.cash], ["地产", gj.ownedCount(pi) + " 块"],
                   ["集齐", gj.monopolyCount(pi) + " 国"], ["总资产", "¥" + gj.assets(pi)]];
     if (p.jail > 0) rows.push(["状态", `🔒服刑(${p.jail})`]);
+    if (p.eliminated) rows.push(["状态", "💀已淘汰"]);
     if (p.hotelStay > 0) rows.push(["状态", `🏨旅馆(${p.hotelStay}天)`]);
     const itemStr = ["jail_free", "frame", "medicine"]
       .map(k => { const n = (p.items || []).filter(x => x === k).length; return n ? `${ITEM_DEFS[k].emoji}${ITEM_DEFS[k].name}×${n}` : ""; })
@@ -359,7 +360,7 @@ const SP = {
       const b = document.createElement("button");
       b.id = "frame-btn"; b.className = "btn";
       b.textContent = "😈 使用嫁祸卡（电脑进监狱）";
-      b.onclick = () => { this.game.useFrame(0); this.render(); };
+      b.onclick = () => { this.game.useFrame(0, 1); this.render(); };
       $("actions").appendChild(b);
     }
   },
@@ -465,7 +466,7 @@ const SP = {
     $("btn-roll").textContent = "🎲 掷骰子";
     actionBtn("⏭️ 结束回合（电脑行动）", () => this.endTurn());
     if (this.game.players[0].items.includes("frame") && this.game.winner === null)
-      actionBtn("😈 使用嫁祸卡（电脑进监狱）", () => { this.game.useFrame(0); this.render(); this.showEndTurn(); });
+      actionBtn("😈 使用嫁祸卡（电脑进监狱）", () => { this.game.useFrame(0, 1); this.render(); this.showEndTurn(); });
     $("btn-roll").disabled = true;
   },
   endTurn() {
@@ -480,7 +481,7 @@ const SP = {
   },
   aiTurn() {
     const g = this.game;
-    if (g.aiUseFrame(1)) g.useFrame(1);
+    if (g.aiUseFrame(1)) g.useFrame(1, 0);
     let guard = 0, again = true;
     while (again && guard++ < 10 && g.winner === null) {
       again = false;
@@ -615,9 +616,10 @@ const MP = {
       d.appendChild(tag);
       box.appendChild(d);
     });
-    const canStart = r && r.phase === "lobby" && r.players.length === 2 && S.seat === 0;
+    const n = r ? r.players.length : 0;
+    const canStart = r && r.phase === "lobby" && n >= 2 && S.seat === 0;
     $("btn-start").disabled = !canStart;
-    $("lobby-hint").textContent = !r ? "连接中…" : r.players.length < 2 ? "等待对手加入…" : (S.seat === 0 ? "对手已就位，点开始！" : "等待房主开始…");
+    $("lobby-hint").textContent = !r ? "连接中…" : n < 2 ? `等待玩家加入…（${n}/5）` : (S.seat === 0 ? `${n}/5 人已就位，点开始！（还能继续等）` : `等待房主开始…（${n}/5）`);
   },
   render() {
     const r = S.room;
@@ -632,7 +634,7 @@ const MP = {
     renderStats(gj, avatarOf, names);
     renderLog(r.game.log);
     clearActions();
-    const g = r.game, myTurn = g.turn === S.seat && g.winner === null;
+    const g = r.game, myTurn = g.turn === S.seat && g.winner === null && !gj.players[S.seat].eliminated;
     const aw = r.awaiting;
     if (g.winner !== null) return this.renderOver(gj);
     if (aw && aw.seat === S.seat) {
@@ -678,11 +680,15 @@ const MP = {
         $("btn-roll").disabled = true;
         actionBtn("⏭️ 结束回合", () => { S.myRolled = false; this.send({ t: "end_turn" }); });
       }
-      if ((gj.players[S.seat].items || []).includes("frame"))
-        actionBtn("😈 使用嫁祸卡（对手进监狱）", () => this.send({ t: "use_frame" }));
+      if ((gj.players[S.seat].items || []).includes("frame")) {
+        const foes = r.players.filter(x => x.seat !== S.seat && !gj.players[x.seat].eliminated);
+        if (foes.length === 1) actionBtn("😈 使用嫁祸卡（对手进监狱）", () => this.send({ t: "use_frame", target: foes[0].seat }));
+        else foes.forEach(f => actionBtn(`😈 嫁祸 ${f.name}`, () => this.send({ t: "use_frame", target: f.seat })));
+      }
     } else {
-      const other = r.players.find(x => x.seat !== S.seat);
-      $("turn-banner").textContent = `⏳ 等待 ${other ? other.name : "对手"} 行动…`;
+      const cur = r.players.find(x => x.seat === g.turn);
+      const elim = gj.players[S.seat].eliminated;
+      $("turn-banner").textContent = elim ? `💀 你已被淘汰，观战中（${cur ? cur.name : "?"} 行动中…）` : `⏳ 等待 ${cur ? cur.name : "对手"} 行动…`;
       $("btn-roll").disabled = true;
     }
     // 骰子动画：lastDice 变化时滚动
@@ -697,8 +703,9 @@ const MP = {
     const w = gj.winner;
     $("turn-banner").textContent = "🏁 游戏结束";
     const ov = document.createElement("div"); ov.id = "gameover";
-    if (w === "draw") ov.textContent = "🤝 平局！";
-    else ov.textContent = w === S.seat ? "🎉 你赢了！世界属于你！" : "😭 对手获胜……";
+    const wp = (S.room && S.room.players.find(x => x.seat === w));
+    const wname = wp ? wp.name : ("玩家" + (w + 1));
+    ov.textContent = w === S.seat ? "🎉 你赢了！世界属于你！" : `🏆 ${wname} 获胜！`;
     $("actions").appendChild(ov);
     actionBtn("🔄 回主页", () => location.reload());
   },

@@ -42,13 +42,14 @@ export class GameRoom extends DurableObject {
     if (!room) room = { code, players: [], game: null, phase: "lobby", awaiting: null, createdAt: Date.now() };
     let me = room.players.find(p => p.id === pid);
     if (!me) {
-      if (room.players.length >= 2) return new Response("房间已满", { status: 403 });
+      if (room.players.length >= 5) return new Response("房间已满（最多5人）", { status: 403 });
       if (room.phase !== "lobby") return new Response("游戏已开始，无法加入", { status: 403 });
       me = { id: pid, name, avatar, seat: room.players.length, connected: true };
       room.players.push(me);
     } else {
       me.connected = true; me.name = name; me.avatar = avatar;
     }
+    room.lastActionAt = Date.now();
     await this._save(room);
 
     const pair = new WebSocketPair();
@@ -65,6 +66,68 @@ export class GameRoom extends DurableObject {
     for (const ws of this.ctx.getWebSockets()) {
       try { ws.send(msg); } catch (e) { /* ignore */ }
     }
+    // 断线托管闹钟：对局中每45秒检查一次
+    try {
+      if (room.phase === "playing") this.ctx.storage.setAlarm(Date.now() + 45000).catch(() => {});
+      else this.ctx.storage.deleteAlarm().catch(() => {});
+    } catch (e) { /* ignore */ }
+  }
+
+  // 闹钟：轮到断线玩家且45秒无行动 → 简单托管代打
+  async alarm() {
+    const room = await this._load();
+    if (!room || room.phase !== "playing" || !room.game) return;
+    const g = Game.fromJSON(room.game);
+    if (g.winner !== null) return;
+    const me = room.players[g.turn];
+    if (!me || me.connected) return;
+    if (Date.now() - (room.lastActionAt || 0) < 40000) return;
+    this._autoTurn(room, g);
+    room.game = g.toJSON();
+    room.lastActionAt = Date.now();
+    room.awaiting = null;
+    if (g.winner !== null) room.phase = "over";
+    await this._save(room);
+    this._broadcast(room);
+  }
+
+  _autoDecide(g, seat, action, cell) {
+    if (action === "buy") { if (g.aiBuy(seat, cell)) g.buy(seat, cell); }
+    else if (action === "buy_hub") { const b = g.aiHubBuilding(seat); if (b) g.buildHub(seat, cell, b); }
+    else if (action === "upgrade") { if (g.aiUpgrade(seat, cell)) g.upgrade(seat, cell); }
+    else if (action === "jail_choice") { if (g.aiBail(seat)) g.payBail(seat); else g.serveJail(seat); }
+  }
+  // 断线玩家的一回合：掷骰+简单决策，出局则跳过
+  _autoTurn(room, g) {
+    const seat = g.turn;
+    if (room.awaiting && room.awaiting.seat === seat) {
+      const cell = g.cells[room.awaiting.cellIdx];
+      this._autoDecide(g, seat, room.awaiting.kind, cell);
+      room.awaiting = null;
+      g.nextTurn();
+    } else {
+      let guard = 0;
+      while (g.winner === null && guard++ < 6) {
+        if (g.autoSkip(seat)) break;
+        const r = g.roll();
+        const who = g.players[seat].name;
+        g.pushLog(`🎲 ${who}（断线托管）掷出 ${r.d1}、${r.d2}（${r.total}点）${r.doubles ? "双骰！再掷一次！" : ""}`);
+        const cell = g.movePlayer(seat, r.total);
+        let res = g.resolveLanding(seat, cell);
+        const wentJail = res.action === "jail_choice" || !!res.jailed;
+        let gd = 0;
+        while (res && (res.action || res.chained) && gd++ < 8 && g.winner === null) {
+          if (res.action) this._autoDecide(g, seat, res.action, res.cell);
+          res = res.chained || null;
+        }
+        if (g.winner !== null) break;
+        const pl = g.players[seat];
+        if (r.doubles && !wentJail && pl.jail === 0 && !pl.bankrupt) continue;
+        break;
+      }
+      if (g.winner === null) g.nextTurn();
+    }
+    room.lastDoubles = false; room.rolled = false; room.lastDice = g.lastRoll;
   }
 
   // 处理结算结果（支持连锁），设置 awaiting
@@ -88,16 +151,18 @@ export class GameRoom extends DurableObject {
     if (!room) return;
     const me = room.players.find(p => p.id === att.pid);
     if (!me) return;
+    room.lastActionAt = Date.now();
     const err = (m) => { try { ws.send(JSON.stringify({ t: "error", msg: m })); } catch (e) { /* ignore */ } };
 
     if (msg.t === "leave") {
       me.connected = false;
       if (room.phase === "playing" && room.game) {
         const g = Game.fromJSON(room.game);
-        if (g.winner === null) {
-          g.winner = 1 - me.seat;
-          g.pushLog(`🏳️ ${me.name} 离开了游戏，对手获胜！`);
-          room.game = g.toJSON(); room.phase = "over"; room.awaiting = null;
+        if (g.winner === null && !g.players[me.seat].eliminated) {
+          g.eliminate(me.seat, "leave");
+          if (g.winner === null && g.turn === me.seat) g.nextTurn();
+          room.game = g.toJSON(); room.awaiting = null;
+          if (g.winner !== null) room.phase = "over";
         }
       } else if (room.phase === "lobby") {
         room.players = room.players.filter(p => p.id !== me.id);
@@ -110,12 +175,11 @@ export class GameRoom extends DurableObject {
 
     if (msg.t === "start") {
       if (me.seat !== 0) return err("只有房主可以开始");
-      if (room.players.length < 2) return err("等待对手加入…");
+      if (room.players.length < 2) return err("至少2人才能开始…");
       if (room.phase !== "lobby") return err("游戏已经开始");
-      const g = new Game();
-      g.players[0].name = room.players[0].name;
-      g.players[1].name = room.players[1].name;
-      g.pushLog(`🎲 游戏开始！${g.players[0].name} 先手。经过起点 +¥${SALARY}，同国房产租金叠加，无限回合直到一方破产或投降。`);
+      const g = new Game(undefined, room.players.length);
+      room.players.forEach((p, i) => { g.players[i].name = p.name; });
+      g.pushLog(`🎲 游戏开始！${g.players[0].name} 先手。${room.players.length}人对战，经过起点 +¥${SALARY}，同国房产租金叠加，无限回合直到最后一人存活。`);
       room.game = g.toJSON(); room.phase = "playing"; room.awaiting = null;
       room.lastDoubles = false; room.rolled = false; room.lastDice = null;
       await this._save(room);
@@ -124,6 +188,7 @@ export class GameRoom extends DurableObject {
 
     if (room.phase !== "playing" || !room.game) return err("游戏未开始");
     const g = Game.fromJSON(room.game);
+    if (g.players[me.seat].eliminated) return err("你已被淘汰，观战中");
 
     if (msg.t === "roll") {
       if (g.winner !== null) return err("游戏已结束");
@@ -154,7 +219,11 @@ export class GameRoom extends DurableObject {
 
     if (msg.t === "use_frame") {
       if (g.turn !== me.seat || room.awaiting || g.winner !== null) return err("现在不能用嫁祸卡");
-      if (!g.useFrame(me.seat)) return err("使用失败");
+      const target = msg.target;
+      if (typeof target !== "number" || target === me.seat || target < 0 || target >= g.players.length)
+        return err("嫁祸目标无效");
+      if (g.players[target].eliminated) return err("对方已出局");
+      if (!g.useFrame(me.seat, target)) return err("使用失败");
       room.game = g.toJSON();
       await this._save(room);
       return this._broadcast(room);

@@ -100,17 +100,18 @@ export function mulberry32(seed) {
 }
 
 export class Game {
-  constructor(seed) {
+  constructor(seed, nPlayers = 2) {
     this.seed = seed === undefined ? (Date.now() % 2147483647) : seed;
     this.rngCalls = 0;
     this.rng = mulberry32(this.seed);
     this.cells = BOARD_DEF.map(([kind, name, district]) => ({
       kind, name, district, owner: null, level: 0, building: null,
     }));
-    this.players = [
-      { name: "玩家1", cash: START_CASH, pos: 0, skip: false, jail: 0, bankrupt: false, items: [], boost: 0, insured: null, hotelStay: 0 },
-      { name: "玩家2", cash: START_CASH, pos: 0, skip: false, jail: 0, bankrupt: false, items: [], boost: 0, insured: null, hotelStay: 0 },
-    ];
+    this.players = [];
+    for (let i = 0; i < Math.max(2, Math.min(8, nPlayers)); i++) {
+      this.players.push({ name: `玩家${i + 1}`, cash: START_CASH, pos: 0, skip: false, jail: 0,
+        bankrupt: false, eliminated: false, items: [], boost: 0, insured: null, hotelStay: 0 });
+    }
     this.turn = 0;
     this.round = 1;
     this.winner = null;
@@ -134,7 +135,7 @@ export class Game {
     const g = new Game(d.seed);
     for (let i = 0; i < (d.rngCalls || 0); i++) g._rand(); // 快进 RNG，保证骰子不重播
     d.cells.forEach((c, i) => { g.cells[i].owner = c.owner; g.cells[i].level = c.level; g.cells[i].building = c.building || null; });
-    g.players = d.players.map(p => ({ items: [], boost: 0, insured: null, hotelStay: 0, ...p }));
+    g.players = d.players.map(p => ({ eliminated: false, items: [], boost: 0, insured: null, hotelStay: 0, ...p }));
     g.turn = d.turn; g.round = d.round; g.winner = d.winner;
     g.lastRoll = d.lastRoll; g.log = d.log || [];
     return g;
@@ -212,8 +213,7 @@ export class Game {
       const rent = this.rentOf(cell);
       const nProps = this.districtPropCount(cell.owner, cell.district);
       if (p.cash < rent) {
-        p.bankrupt = true; this.winner = 1 - pidx;
-        this.pushLog(`💸 ${p.name} 付不起 ¥${rent} 租金，破产！`);
+        this.eliminate(pidx, "bankrupt");
         return { action: null, cell, bankrupt: true };
       }
       p.cash -= rent; this.players[cell.owner].cash += rent;
@@ -227,8 +227,8 @@ export class Game {
       const owner = this.players[cell.owner];
       if (b.toll > 0) {
         if (p.cash < b.toll) {
-          p.bankrupt = true; this.winner = 1 - pidx;
-          this.pushLog(`💸 ${p.name} 付不起${b.name}过路费 ¥${b.toll}，破产！`);
+          this.eliminate(pidx, "bankrupt");
+          this.pushLog(`💸 ${p.name} 付不起${b.name}过路费 ¥${b.toll}！`);
           return { action: null, cell, bankrupt: true };
         }
         p.cash -= b.toll; owner.cash += b.toll;
@@ -339,13 +339,13 @@ export class Game {
     this.pushLog(`${b.emoji} ${p.name} 在${cell.name}建造了【${b.name}】（¥${b.cost}）${b.toll ? `，过路费 ¥${b.toll}` : ""}`);
     return true;
   }
-  // 嫁祸卡：对手进监狱（对方有免罚卡则抵挡）
-  useFrame(pidx) {
+  // 嫁祸卡：指定对手进监狱（对方有免罚卡则抵挡）
+  useFrame(pidx, target) {
     const p = this.players[pidx];
+    const t = this.players[target];
     const fi = p.items.indexOf("frame");
-    if (fi < 0 || this.winner !== null) return false;
+    if (fi < 0 || this.winner !== null || !t || target === pidx || t.eliminated) return false;
     p.items.splice(fi, 1);
-    const t = this.players[1 - pidx];
     const gi = t.items.indexOf("jail_free");
     if (gi >= 0) {
       t.items.splice(gi, 1);
@@ -390,17 +390,46 @@ export class Game {
   }
 
   nextTurn() {
-    this.turn = 1 - this.turn;
-    if (this.turn === 0) this.round += 1;
+    if (this.winner !== null) return;
+    const n = this.players.length;
+    let steps = 0;
+    while (steps++ <= n) {
+      const prev = this.turn;
+      this.turn = (this.turn + 1) % n;
+      if (this.turn < prev) this.round += 1; // 绕回一圈
+      if (!this.players[this.turn].eliminated) break;
+    }
+    this._checkWin();
   }
 
-  // 投降：对手直接获胜
-  surrender(pidx) {
-    if (this.winner !== null) return false;
-    this.winner = 1 - pidx;
-    this.players[pidx].bankrupt = true;
-    this.pushLog(`🏳️ ${this.players[pidx].name} 投降，${this.players[this.winner].name} 获胜！`);
+  aliveSeats() {
+    const r = [];
+    this.players.forEach((p, i) => { if (!p.eliminated) r.push(i); });
+    return r;
+  }
+  _checkWin() {
+    if (this.winner !== null) return;
+    const alive = this.aliveSeats();
+    if (alive.length === 1) {
+      this.winner = alive[0];
+      this.pushLog(`🏆 ${this.players[this.winner].name} 是最后的幸存者，赢得比赛！`);
+    }
+  }
+  // 淘汰（破产/投降/离开）：最后一人存活即获胜
+  eliminate(pidx, reason = "bankrupt") {
+    const p = this.players[pidx];
+    if (this.winner !== null || p.eliminated) return false;
+    p.eliminated = true; p.bankrupt = true;
+    const label = reason === "surrender" ? "🏳️" : reason === "leave" ? "🚪" : "💸";
+    const verb = reason === "surrender" ? "投降" : reason === "leave" ? "离开游戏" : "破产";
+    this.pushLog(`${label} ${p.name}${verb}，被淘汰出局！`);
+    this._checkWin();
     return true;
+  }
+
+  // 投降：算淘汰
+  surrender(pidx) {
+    return this.eliminate(pidx, "surrender");
   }
 
   // ---- AI（单机模式） ----

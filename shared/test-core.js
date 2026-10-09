@@ -28,7 +28,7 @@ function autoPlay(seed, maxTurns = 6000) {
         else if (res.action === "buy_hub") { const b = g.aiHubBuilding(pidx); if (b) ok(g.buildHub(pidx, c, b), "AI建中转站"); }
         else if (res.action === "upgrade") { if (g.aiUpgrade(pidx, c)) ok(g.upgrade(pidx, c), "AI升级"); }
         else if (res.action === "jail_choice") { if (g.aiBail(pidx)) ok(g.payBail(pidx), "AI保释"); else g.serveJail(pidx); }
-        if (g.aiUseFrame(pidx)) ok(g.useFrame(pidx), "AI用嫁祸卡");
+        if (g.aiUseFrame(pidx)) ok(g.useFrame(pidx, 1 - pidx), "AI用嫁祸卡");
         res = { action: null };
       }
       ok(!p.bankrupt || g.winner !== null, "破产必有赢家");
@@ -292,13 +292,14 @@ console.log("中转站 ✓");
   // 嫁祸卡：对手进监狱
   const g3 = new Game(23);
   g3.players[0].items.push("frame");
-  ok(g3.useFrame(0) && g3.players[1].jail === JAIL_TURNS, "嫁祸成功");
-  ok(!g3.useFrame(0), "卡已用完不能再用");
+  ok(g3.useFrame(0, 1) && g3.players[1].jail === JAIL_TURNS, "嫁祸成功");
+  ok(!g3.useFrame(0, 1), "卡已用完不能再用");
+  ok(!g3.useFrame(0, 0), "不能嫁祸自己");
   // 对方有免罚卡则抵挡
   const g4 = new Game(24);
   g4.players[0].items.push("frame");
   g4.players[1].items.push("jail_free");
-  ok(g4.useFrame(0) && g4.players[1].jail === 0, "免罚卡抵挡嫁祸");
+  ok(g4.useFrame(0, 1) && g4.players[1].jail === 0, "免罚卡抵挡嫁祸");
   ok(!g4.players[1].items.includes("jail_free"), "抵挡消耗免罚卡");
 }
 console.log("机会新卡 ✓");
@@ -327,4 +328,24 @@ console.log("起点工资 ✓");
   ok(g.rentOf(arg[2]) === 900 * 3, "阿根廷3城租金叠加");
 }
 console.log("新国家 ✓");
+
+// 13. 多人淘汰制：4人，淘汰2人，回合跳过出局者，最后一人获胜
+{
+  const g = new Game(27, 4);
+  ok(g.players.length === 4, "4个玩家");
+  ok(g.aliveSeats().join() === "0,1,2,3", "初始全存活");
+  g.eliminate(1, "bankrupt");
+  ok(g.winner === null, "还剩3人，游戏继续");
+  ok(g.aliveSeats().join() === "0,2,3", "出局者被跳过");
+  g.turn = 0; g.nextTurn();
+  ok(g.turn === 2, "回合跳过已淘汰的1号位=" + g.turn);
+  g.eliminate(2, "surrender");
+  g.eliminate(0, "leave");
+  ok(g.winner === 3, "最后幸存者获胜=" + g.winner);
+  ok(!g.eliminate(3), "已结束不能再淘汰");
+  // 序列化保留淘汰状态
+  const g2 = Game.fromJSON(g.toJSON());
+  ok(g2.players[1].eliminated && g2.winner === 3, "淘汰状态序列化");
+}
+console.log("多人淘汰制 ✓");
 console.log(`全部通过（${pass}断言）`);
