@@ -1,0 +1,8 @@
+dist/
+__pycache__/
+*.pyc
+node_modules/
+.DS_Store
+# 头像 webp 原图只留本地（MCP 通道传二进制会损坏），仓库以 assets/avatars/*.txt 文本为准
+assets/*.webp
+assets/avatars.json

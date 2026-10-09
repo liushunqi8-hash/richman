@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>大富翁 Richman · 世界版</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: #14161c; color: #eee;
+         font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  #app { max-width: 1240px; margin: 0 auto; }
+  .screen { display: none; }
+  .screen.active { display: block; }
+  h1 { font-size: 30px; margin: 10px 0; }
+  h2 { font-size: 22px; }
+  .sub { color: #888; font-size: 13px; margin-bottom: 14px; }
+  #avatar-picker { display: flex; gap: 12px; margin: 12px 0; flex-wrap: wrap; }
+  .avatar-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .avatar-name { font-size: 12px; color: #9fb3d8; }
+  .avatar-opt { width: 84px; height: 84px; border-radius: 16px; border: 3px solid #333a4d;
+                cursor: pointer; overflow: hidden; background: #1e2230; padding: 0; }
+  .avatar-opt img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .avatar-opt.sel { border-color: #2f6df6; box-shadow: 0 0 12px #2f6df688; }
+  #name-input, #room-code-input { padding: 10px 12px; font-size: 15px; border-radius: 8px;
+      border: 2px solid #333a4d; background: #1e2230; color: #eee; margin: 6px 8px 6px 0; }
+  #room-code-input { text-transform: uppercase; width: 140px; letter-spacing: 2px; }
+  .btn { display: inline-block; margin: 6px 8px 6px 0; padding: 12px 20px; font-size: 15px;
+         border: none; border-radius: 10px; cursor: pointer; background: #2f6df6; color: #fff; }
+  .btn:disabled { background: #3a3f4d; color: #888; cursor: default; }
+  .btn:hover:not(:disabled) { background: #4a86ff; }
+  .btn.ghost { background: #2a2f3d; }
+  .btn.big { font-size: 17px; padding: 14px 28px; }
+  #lobby-code { font-size: 40px; letter-spacing: 6px; color: #ffd43b; font-weight: bold; }
+  .lobby-player { display: flex; align-items: center; gap: 10px; background: #1e2230;
+                  border-radius: 10px; padding: 10px 14px; margin: 8px 0; font-size: 16px; max-width: 420px; }
+  .lobby-player img { width: 44px; height: 44px; border-radius: 10px; object-fit: cover; }
+  .lobby-player .seat-tag { margin-left: auto; color: #888; font-size: 13px; }
+  #wrap { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+  #board { display: grid; grid-template-columns: repeat(8, 1fr); gap: 5px;
+           flex: 1 1 620px; min-width: 340px; }
+  .cell { background: #1e2230; border: 2px solid #333a4d; border-radius: 8px;
+          padding: 5px 3px; min-height: 66px; text-align: center; }
+  .cname { font-size: 11px; font-weight: bold; }
+  .cinfo { font-size: 11px; color: #9fb3d8; margin-top: 2px; }
+  .cell.land { padding: 0; overflow: hidden; position: relative; }
+  .land-bar { height: 5px; position: relative; z-index: 2; }
+  .land-img { position: absolute; top: 5px; left: 0; width: 100%;
+              height: calc(100% - 5px); object-fit: cover; display: block; }
+  .land-label { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+                padding: 10px 3px 3px; text-align: center; color: #fff;
+                background: linear-gradient(transparent, rgba(0,0,0,.8)); }
+  .land-name { font-size: 12px; font-weight: 700; text-shadow: 0 1px 3px #000; }
+  .land-price { font-size: 10px; opacity: .92; }
+  .cell.land .tokens { position: absolute; top: 8px; left: 4px; z-index: 3;
+                       margin-top: 0; min-height: 0; }
+  .pdot { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+          border: 2px solid #fff; margin: 0 1px; vertical-align: middle;
+          box-shadow: 0 1px 3px #000; }
+  #board-center { grid-row: 2 / 8; grid-column: 2 / 8; display: flex; gap: 10px;
+                 align-items: center; justify-content: center; flex-wrap: wrap;
+                 padding: 8px; }
+  .center-player { display: flex; align-items: center; gap: 9px;
+                   background: #1e2230f2; border: 2px solid #333a4d;
+                   border-radius: 12px; padding: 8px 12px; }
+  .center-player img { width: 42px; height: 42px; border-radius: 10px; object-fit: cover; }
+  .center-player.active-turn { border-color: #ffd43b; box-shadow: 0 0 12px #ffd43b66; }
+  .cp-name { font-weight: 700; font-size: 14px; }
+  .cp-pos { font-size: 12px; color: #9fb3d8; margin-top: 2px; }
+  .tokens { margin-top: 4px; min-height: 14px; }
+  #side { flex: 0 1 320px; min-width: 280px; }
+  #turn-banner { font-size: 15px; font-weight: bold; margin: 4px 0; min-height: 22px; }
+  #dice { font-size: 40px; margin-left: 12px; vertical-align: middle; letter-spacing: 4px; }
+  #actions { margin: 10px 0; min-height: 40px; font-size: 14px; }
+  #stats { display: flex; gap: 8px; margin: 10px 0; }
+  .pstat { flex: 1; background: #1e2230; border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+  .pstat img { width: 30px; height: 30px; border-radius: 8px; vertical-align: middle; margin-right: 6px; object-fit: cover; }
+  #round { align-self: center; color: #888; font-size: 13px; }
+  h3 { margin: 12px 0 6px; font-size: 15px; }
+  #log { background: #0f1117; border-radius: 8px; padding: 10px; height: 300px;
+         overflow-y: auto; font-size: 13px; line-height: 1.7; }
+  #gameover { font-size: 17px; font-weight: bold; margin: 8px 0; }
+  #conn { font-size: 13px; color: #888; margin-bottom: 6px; }
+  #conn.bad { color: #ff6b6b; }
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+           background: #ff6b6b; color: #fff; padding: 10px 18px; border-radius: 10px;
+           display: none; font-size: 14px; z-index: 99; }
+  .hint { color: #888; font-size: 13px; margin: 8px 0; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- 主页 -->
+  <section id="screen-home" class="screen active">
+    <h1>💰 大富翁 Richman · 世界版</h1>
+    <p class="sub">环游世界买地皮 · 垄断整国收全区租金 · 纯 JS 驱动</p>
+    <h3>① 选个形象</h3>
+    <div id="avatar-picker"></div>
+    <h3>② 取个名字</h3>
+    <input id="name-input" placeholder="你的名字" maxlength="12">
+    <h3>③ 开玩</h3>
+    <div>
+      <button class="btn big" id="btn-single">🤖 单机（打电脑）</button>
+      <button class="btn big" id="btn-create">🎮 创建房间（联机）</button>
+    </div>
+    <div style="margin-top:10px">
+      <input id="room-code-input" placeholder="房号" maxlength="6">
+      <button class="btn" id="btn-join">🔑 加入房间</button>
+    </div>
+    <p class="hint">联机：一个人点「创建房间」，把 6 位房号发给朋友，朋友输入房号加入，房主点开始。</p>
+  </section>
+
+  <!-- 大厅 -->
+  <section id="screen-lobby" class="screen">
+    <h2>🎮 联机房间</h2>
+    <p class="sub">把房号发给朋友 👇</p>
+    <div id="lobby-code">------</div>
+    <div id="lobby-players"></div>
+    <p class="hint" id="lobby-hint">等待对手加入…</p>
+    <button class="btn big" id="btn-start">▶ 开始游戏</button>
+    <button class="btn ghost" id="btn-lobby-leave">离开房间</button>
+  </section>
+
+  <!-- 游戏 -->
+  <section id="screen-game" class="screen">
+    <div id="conn"></div>
+    <div id="turn-banner"></div>
+    <div id="wrap">
+      <div id="board"></div>
+      <div id="side">
+        <div><button class="btn" id="btn-roll">🎲 掷骰子</button><span id="dice"></span></div>
+        <div id="actions"></div>
+        <div id="stats"></div>
+        <h3>📜 战报</h3>
+        <div id="log"></div>
+        <div style="margin-top:10px"><button class="btn ghost" id="btn-leave-game">🏳️ 离开</button></div>
+      </div>
+    </div>
+  </section>
+</div>
+<div id="toast"></div>
+
+<script>
+/*__GAME_CORE__*/
+const AVATARS = /*__AVATARS__*/;
+const LANDMARKS = /*__LANDMARKS__*/{};
+const AVATAR_NAMES = { nailong: "奶龙", naiwa: "奶蛙", lulu: "噜噜", doro: "doro", maodie: "耄耋", weini: "维尼", astro: "宇航员", fox: "狐狸", panda: "熊猫", robot: "机器人" };
+const AVATAR_ORDER = ["nailong", "naiwa", "lulu", "doro", "maodie", "weini", "astro", "fox", "panda", "robot"];
+
+const $ = (id) => document.getElementById(id);
+const OWNER_COLOR = ["#4da3ff", "#ff6b6b"];
+const DICE_FACES = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
+let diceTimer = null;
+// 骰子滚动动画：随机闪 7 次后停在 d1/d2，cb 可选
+function tumbleDice(d1, d2, cb) {
+  const el = $("dice");
+  if (diceTimer) { clearInterval(diceTimer); diceTimer = null; }
+  let n = 0;
+  diceTimer = setInterval(() => {
+    el.textContent = DICE_FACES[Math.floor(Math.random() * 6)] + DICE_FACES[Math.floor(Math.random() * 6)];
+    if (++n >= 7) {
+      clearInterval(diceTimer); diceTimer = null;
+      el.textContent = DICE_FACES[d1 - 1] + DICE_FACES[d2 - 1];
+      if (cb) cb();
+    }
+  }, 90);
+}
+const CELL_EMOJI = { start: "", land: "", chance: "", tax: "", rest: "", jail: "", hospital: "" };
+
+const S = {
+  mode: null,            // 'single' | 'multi'
+  name: "", avatar: "astro", pid: null,
+  ws: null, seat: 0, room: null, myRolled: false, shownDice: null,
+  game: null,            // 单机：Game 实例
+  logLines: [],
+};
+
+function showScreen(id) {
+  document.querySelectorAll(".screen").forEach(s => s.classList.toggle("active", s.id === id));
+}
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.style.display = "block";
+  setTimeout(() => t.style.display = "none", 2500);
+}
+function genCode() {
+  const c = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  let s = ""; for (let i = 0; i < 6; i++) s += c[Math.floor(Math.random() * c.length)];
+  return s;
+}
+
+// ---------- 形象选择 ----------
+function buildAvatarPicker() {
+  const box = $("avatar-picker"); box.innerHTML = "";
+  AVATAR_ORDER.filter(id => AVATARS[id]).forEach((id) => {
+    const wrap = document.createElement("div"); wrap.className = "avatar-wrap";
+    const b = document.createElement("button");
+    b.className = "avatar-opt" + (id === S.avatar ? " sel" : "");
+    const img = document.createElement("img"); img.src = AVATARS[id]; img.alt = id;
+    b.appendChild(img);
+    b.onclick = () => { S.avatar = id; buildAvatarPicker(); };
+    const nm = document.createElement("div"); nm.className = "avatar-name";
+    nm.textContent = AVATAR_NAMES[id] || id;
+    wrap.appendChild(b); wrap.appendChild(nm);
+    box.appendChild(wrap);
+  });
+}
+function readName() {
+  const v = $("name-input").value.trim();
+  S.name = v || ("玩家" + Math.floor(Math.random() * 900 + 100));
+}
+
+// ---------- 通用渲染（单机/联机共用，输入为 Game.toJSON 形状） ----------
+function viewGame(stateJson) { return Game.fromJSON(JSON.parse(JSON.stringify(stateJson))); }
+
+function renderBoard(gj, avatarOf) {
+  const b = $("board"); b.innerHTML = "";
+  BOARD_DEF.forEach(([kind, name, district], i) => {
+    const [r, c] = cellGridPos(i);
+    const cell = gj.cells[i];
+    const d = document.createElement("div");
+    d.className = "cell" + (kind === "land" ? " land" : "");
+    d.style.gridRow = r + 1; d.style.gridColumn = c + 1;
+    if (cell.owner !== null) { d.style.borderColor = OWNER_COLOR[cell.owner]; d.style.borderWidth = "3px"; }
+    if (kind === "land") {
+      // 地标图 + 顶部一根国家色线表示区域
+      const bar = document.createElement("div"); bar.className = "land-bar";
+      bar.style.background = DISTRICTS[district].color; d.appendChild(bar);
+      const img = document.createElement("img"); img.className = "land-img";
+      img.src = LANDMARKS[name] || ""; img.alt = name; img.loading = "lazy";
+      img.onerror = () => { img.style.display = "none"; };
+      d.appendChild(img);
+      const crown = cell.owner !== null && gj.monopoly(cell.owner, district) ? "👑" : "";
+      const label = document.createElement("div"); label.className = "land-label";
+      const l1 = document.createElement("div"); l1.className = "land-name";
+      l1.textContent = `${crown}${name}${cell.level ? "⭐" : ""}`;
+      const l2 = document.createElement("div"); l2.className = "land-price";
+      l2.textContent = `¥${gj.priceOf(cell) / 1000}k`;
+      label.appendChild(l1); label.appendChild(l2); d.appendChild(label);
+    } else {
+      const nm = document.createElement("div"); nm.className = "cname";
+      const ej = kind === "chance" ? "❓" : kind === "tax" ? "🧾" : kind === "rest" ? "🏖️" : kind === "jail" ? "🚔" : kind === "hospital" ? "🏥" : kind === "start" ? "🏁" : "";
+      nm.textContent = `${ej}${name}`;
+      d.appendChild(nm);
+      d.appendChild(Object.assign(document.createElement("div"), { className: "cinfo" }));
+    }
+    const tk = document.createElement("div"); tk.className = "tokens";
+    gj.players.forEach((p, pi) => {
+      if (p.pos === i && !p.bankrupt) {
+        const dot = document.createElement("span");
+        dot.className = "pdot"; dot.style.background = OWNER_COLOR[pi]; dot.title = p.name;
+        tk.appendChild(dot);
+      }
+    });
+    d.appendChild(tk);
+    b.appendChild(d);
+  });
+  // 棋子放到棋盘中间空地：头像 + 名字 + 当前位置
+  const center = document.createElement("div"); center.id = "board-center";
+  gj.players.forEach((p, pi) => {
+    const card = document.createElement("div");
+    card.className = "center-player" + (gj.turn === pi && gj.winner === null ? " active-turn" : "");
+    const im = document.createElement("img");
+    im.src = AVATARS[avatarOf(pi)] || AVATARS.astro; im.alt = p.name;
+    const tx = document.createElement("div");
+    const nm = document.createElement("div"); nm.className = "cp-name";
+    nm.textContent = (p.jail > 0 ? "🔒" : "") + p.name;
+    const pos = document.createElement("div"); pos.className = "cp-pos";
+    pos.textContent = "📍 " + gj.cells[p.pos].name.replace(/^\S+\s+/, "");
+    tx.appendChild(nm); tx.appendChild(pos);
+    card.appendChild(im); card.appendChild(tx);
+    center.appendChild(card);
+  });
+  b.appendChild(center);
+}
+
+function renderStats(gj, avatarOf, names) {
+  const s = $("stats"); s.innerHTML = "";
+  gj.players.forEach((p, pi) => {
+    const d = document.createElement("div"); d.className = "pstat";
+    const im = document.createElement("img"); im.src = AVATARS[avatarOf(pi)] || AVATARS.astro;
+    d.appendChild(im);
+    const t = document.createElement("b"); t.textContent = names(pi);
+    d.appendChild(t); d.appendChild(document.createElement("br"));
+    const rows = [["现金", "¥" + p.cash], ["地产", gj.ownedCount(pi) + " 块"],
+                  ["垄断", gj.monopolyCount(pi) + " 国"], ["总资产", "¥" + gj.assets(pi)]];
+    if (p.jail > 0) rows.push(["状态", `🔒服刑(${p.jail})`]);
+    rows.forEach(([k, v]) => { const r = document.createElement("div"); r.textContent = `${k}：${v}`; d.appendChild(r); });
+    s.appendChild(d);
+  });
+  const rd = document.createElement("div"); rd.id = "round";
+  rd.textContent = `第 ${Math.min(gj.round, MAX_ROUNDS)} / ${MAX_ROUNDS} 回合`;
+  s.appendChild(rd);
+}
+
+function renderLog(lines) {
+  const el = $("log"); el.innerHTML = "";
+  [...lines].reverse().forEach(line => {
+    const d = document.createElement("div"); d.textContent = line; el.appendChild(d);
+  });
+}
+
+function actionBtn(text, fn) {
+  const b = document.createElement("button"); b.className = "btn"; b.textContent = text;
+  b.onclick = fn; $("actions").appendChild(b);
+}
+function clearActions() { $("actions").innerHTML = ""; }
+
+// ================= 单机模式 =================
+const SP = {
+  game: null, aiTimer: null,
+  start() {
+    S.mode = "single";
+    this.game = new Game();
+    this.game.players[0].name = S.name;
+    this.game.players[1].name = "电脑";
+    this._rolled = false; this._doubleBonus = false; this._lastRoll = null;
+    $("dice").textContent = "";
+    $("btn-roll").textContent = "🎲 掷骰子";
+    showScreen("screen-game");
+    $("conn").textContent = "🤖 单机模式";
+    this.game.pushLog(`🎲 游戏开始！${S.name} 先手。经过起点 +¥${SALARY}，垄断整国收全区租金，${MAX_ROUNDS} 回合后比总资产。`);
+    this.render();
+  },
+  view() { return this.game.toJSON(); },
+  avatarOf: (pi) => pi === 0 ? S.avatar : "robot",
+  names: (pi) => pi === 0 ? `🧑 ${S.name}` : "🤖 电脑",
+  render() {
+    const gj = viewGame(this.view());
+    renderBoard(gj, this.avatarOf);
+    renderStats(gj, this.avatarOf, this.names);
+    renderLog(this.game.log);
+    $("btn-roll").disabled = !(this.game.turn === 0 && this.game.winner === null);
+    const w = this.game.winner;
+    $("turn-banner").textContent = w !== null ? "🏁 游戏结束" : (this.game.turn === 0 ? `▶ 轮到你（${S.name}）` : "▶ 电脑回合…");
+  },
+  blocked() {
+    const p = this.game.players[0];
+    if (p.jail > 0 || p.skip) { this.game.autoSkip(0); this.render(); this.endTurn(); return true; }
+    return false;
+  },
+  onRoll() {
+    const g = this.game;
+    if (g.winner !== null || g.turn !== 0) return;
+    if (this._rolled && !this._doubleBonus) return;
+    if (this.blocked()) return;
+    this._doubleBonus = false;
+    this._rolled = true;
+    $("btn-roll").disabled = true;
+    $("btn-roll").textContent = "🎲 掷骰子";
+    const r = g.roll();
+    this._lastRoll = r;
+    g.pushLog(`🎲 你掷出 ${DICE_FACES[r.d1 - 1]}${DICE_FACES[r.d2 - 1]}（${r.total}点）${r.doubles ? "双骰！" : ""}`);
+    tumbleDice(r.d1, r.d2, () => {
+      const cell = g.movePlayer(0, r.total);
+      this.render();
+      this.settle(0, g.resolveLanding(0, cell), r);
+    });
+  },
+  settle(pidx, res, rollInfo) {
+    const g = this.game;
+    if (res.bankrupt) { this.render(); return this.gameOver(); }
+    if (res.chained) { this.settle(pidx, res.chained, rollInfo); if (g.winner !== null) return; if (this._waiting) return; }
+    const a = res.action, cell = res.cell;
+    if (a === "buy") return this.askBuy(cell);
+    if (a === "upgrade") return this.askUpgrade(cell);
+    if (a === "jail_choice") return this.askJail();
+    this.render();
+    if (g.winner !== null) return this.gameOver();
+    this.finishMove(rollInfo, false);
+  },
+  // 本次行动结束：双骰且未进监狱 → 再掷一次，否则结束回合
+  finishMove(rollInfo, forfeited) {
+    const g = this.game, p = g.players[0];
+    if (rollInfo && rollInfo.doubles && !forfeited && g.winner === null && p.jail === 0 && !p.bankrupt) {
+      this._rolled = false; this._doubleBonus = true;
+      clearActions();
+      const tip = document.createElement("div");
+      tip.textContent = "🎲 双骰相同！再掷一次！";
+      $("actions").appendChild(tip);
+      $("btn-roll").disabled = false;
+      $("btn-roll").textContent = "🎲 再掷一次！";
+    } else {
+      this.showEndTurn();
+    }
+  },
+  _waiting: false,
+  askBuy(cell) {
+    this._waiting = true; clearActions();
+    const g = this.game, rent = g.rentOf(cell);
+    const tip = document.createElement("div");
+    tip.textContent = `「${DISTRICTS[cell.district].flag}${cell.name}」售价 ¥${g.priceOf(cell)}，租金 ¥${rent}，买吗？`;
+    $("actions").appendChild(tip);
+    $("btn-roll").disabled = true;
+    actionBtn(`买！(-¥${g.priceOf(cell)})`, () => { g.buy(0, cell); this._waiting = false; this.render(); this.finishMove(this._lastRoll, false); });
+    actionBtn("放弃", () => { g.pushLog(`🚶 你放弃购买「${cell.name}」`); this._waiting = false; this.render(); this.finishMove(this._lastRoll, false); });
+  },
+  askUpgrade(cell) {
+    this._waiting = true; clearActions();
+    const g = this.game;
+    cell.level = 1; const nr = g.rentOf(cell); cell.level = 0; // 预览升级后租金（含垄断全区规则）
+    const tip = document.createElement("div");
+    tip.textContent = `升级「${cell.name}」花 ¥${g.upgradeCostOf(cell)}？租金 ¥${g.rentOf(cell)} → ¥${nr}`;
+    $("actions").appendChild(tip);
+    $("btn-roll").disabled = true;
+    actionBtn(`升级！(-¥${g.upgradeCostOf(cell)})`, () => { g.upgrade(0, cell); this._waiting = false; this.render(); this.finishMove(this._lastRoll, false); });
+    actionBtn("算了", () => { this._waiting = false; this.render(); this.finishMove(this._lastRoll, false); });
+  },
+  askJail() {
+    this._waiting = true; clearActions();
+    const tip = document.createElement("div");
+    tip.textContent = `🚔 你进了监狱！交保释金 ¥${BAIL_COST} 马上出去，还是坐满 ${JAIL_TURNS} 回合？`;
+    $("actions").appendChild(tip);
+    $("btn-roll").disabled = true;
+    actionBtn(`交保释金（-¥${BAIL_COST}）`, () => { if (!this.game.payBail(0)) this.game.serveJail(0); this._waiting = false; this.render(); this.finishMove(this._lastRoll, true); });
+    actionBtn(`坐牢（${JAIL_TURNS}回合）`, () => { this.game.serveJail(0); this._waiting = false; this.render(); this.finishMove(this._lastRoll, true); });
+  },
+  showEndTurn() {
+    clearActions();
+    $("btn-roll").textContent = "🎲 掷骰子";
+    actionBtn("⏭️ 结束回合（电脑行动）", () => this.endTurn());
+    $("btn-roll").disabled = true;
+  },
+  endTurn() {
+    const g = this.game;
+    clearActions();
+    this._rolled = false; this._doubleBonus = false;
+    g.nextTurn();
+    this.render();
+    if (g.winner !== null) return this.gameOver();
+    clearTimeout(this.aiTimer);
+    this.aiTimer = setTimeout(() => this.aiTurn(), 800);
+  },
+  aiTurn() {
+    const g = this.game;
+    let guard = 0, again = true;
+    while (again && guard++ < 10 && g.winner === null) {
+      again = false;
+      if (g.autoSkip(1)) break;
+      const r = g.roll();
+      $("dice").textContent = DICE_FACES[r.d1 - 1] + DICE_FACES[r.d2 - 1];
+      g.pushLog(`🎲 电脑掷出 ${DICE_FACES[r.d1 - 1]}${DICE_FACES[r.d2 - 1]}（${r.total}点）${r.doubles ? "双骰！" : ""}`);
+      const cell = g.movePlayer(1, r.total);
+      const res = g.resolveLanding(1, cell);
+      const wentJail = res.action === "jail_choice" || !!res.jailed;
+      this.settleAI(res);
+      if (g.winner !== null) return this.gameOver();
+      const p = g.players[1];
+      if (r.doubles && !wentJail && p.jail === 0 && !p.bankrupt) again = true;
+    }
+    g.nextTurn();
+    this._rolled = false; this._doubleBonus = false;
+    this.render();
+    if (g.winner !== null) return this.gameOver();
+    $("btn-roll").disabled = false;
+    $("btn-roll").textContent = "🎲 掷骰子";
+  },
+  settleAI(res) {
+    const g = this.game;
+    if (res.bankrupt) { this.render(); return this.gameOver(); }
+    if (res.chained) this.settleAI(res.chained);
+    const a = res.action, cell = res.cell;
+    if (a === "buy" && g.aiBuy(1, cell)) g.buy(1, cell);
+    else if (a === "upgrade" && g.aiUpgrade(1, cell)) g.upgrade(1, cell);
+    else if (a === "jail_choice") { if (g.aiBail(1)) g.payBail(1); else g.serveJail(1); }
+    this.render();
+  },
+  gameOver() {
+    const g = this.game, w = g.winner;
+    $("btn-roll").disabled = true; clearActions();
+    const ov = document.createElement("div"); ov.id = "gameover";
+    if (w === 0) ov.textContent = "🎉 你赢了！世界属于你！";
+    else if (w === 1) ov.textContent = "😭 你破产了……电脑笑到了最后。";
+    else ov.textContent = w === "draw" ? "🤝 平局！" : `🏁 ${MAX_ROUNDS} 回合结束，${g.players[w].name} 获胜！`;
+    $("actions").appendChild(ov);
+    actionBtn("🔄 再来一局", () => location.reload());
+    this.render();
+  },
+};
+
+// ================= 联机模式 =================
+const MP = {
+  connect(code, isCreate) {
+    S.mode = "multi"; S.pid = S.pid || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
+    S.helloReceived = false;
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    const url = `${proto}//${location.host}/ws?room=${code}&name=${encodeURIComponent(S.name)}&avatar=${S.avatar}&pid=${S.pid}&create=${isCreate ? 1 : 0}`;
+    const ws = new WebSocket(url);
+    S.ws = ws;
+    ws.onopen = () => { $("conn").textContent = "🟢 已连接"; };
+    ws.onclose = () => {
+      const c = $("conn"); c.textContent = "🔴 连接断开"; c.classList.add("bad");
+      if (!S.helloReceived) { toast("房间不存在，请检查房号"); showScreen("screen-home"); }
+    };
+    ws.onerror = () => { if (!S.helloReceived) toast("连接失败，请检查房号"); };
+    ws.onmessage = (ev) => {
+      let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (m.t === "hello") { S.helloReceived = true; S.seat = m.seat; S.pid = m.pid; }
+      else if (m.t === "state") { S.room = m.room; this.render(); }
+      else if (m.t === "error") toast(m.msg);
+    };
+    showScreen("screen-lobby");
+    this.renderLobby();
+  },
+  send(o) { if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(o)); },
+  renderLobby() {
+    const r = S.room;
+    if (r && r.code) $("lobby-code").textContent = r.code;
+    const box = $("lobby-players"); box.innerHTML = "";
+    (r ? r.players : []).forEach(p => {
+      const d = document.createElement("div"); d.className = "lobby-player";
+      const im = document.createElement("img"); im.src = AVATARS[p.avatar] || AVATARS.astro;
+      d.appendChild(im);
+      const nm = document.createElement("span"); nm.textContent = p.name + (p.connected ? "" : "（断线）");
+      d.appendChild(nm);
+      const tag = document.createElement("span"); tag.className = "seat-tag";
+      tag.textContent = p.seat === 0 ? "房主" : "挑战者";
+      d.appendChild(tag);
+      box.appendChild(d);
+    });
+    const canStart = r && r.phase === "lobby" && r.players.length === 2 && S.seat === 0;
+    $("btn-start").disabled = !canStart;
+    $("lobby-hint").textContent = !r ? "连接中…" : r.players.length < 2 ? "等待对手加入…" : (S.seat === 0 ? "对手已就位，点开始！" : "等待房主开始…");
+  },
+  render() {
+    const r = S.room;
+    if (!r) return this.renderLobby();
+    if (r.phase === "lobby") { showScreen("screen-lobby"); return this.renderLobby(); }
+    showScreen("screen-game");
+    $("conn").textContent = "🟢 联机中 · 房号 " + r.code;
+    const gj = viewGame(r.game);
+    const avatarOf = (pi) => { const p = r.players.find(x => x.seat === pi); return p ? p.avatar : "astro"; };
+    const names = (pi) => { const p = r.players.find(x => x.seat === pi); return (p ? p.name : "?") + (pi === S.seat ? "（你）" : ""); };
+    renderBoard(gj, avatarOf);
+    renderStats(gj, avatarOf, names);
+    renderLog(r.game.log);
+    clearActions();
+    const g = r.game, myTurn = g.turn === S.seat && g.winner === null;
+    const aw = r.awaiting;
+    if (g.winner !== null) return this.renderOver(gj);
+    if (aw && aw.seat === S.seat) {
+      const cell = gj.cells[aw.cellIdx];
+      $("turn-banner").textContent = "🤔 轮到你做决定";
+      $("btn-roll").disabled = true;
+      if (aw.kind === "buy") {
+        const tip = document.createElement("div");
+        tip.textContent = `「${DISTRICTS[cell.district].flag}${cell.name}」售价 ¥${gj.priceOf(cell)}，租金 ¥${gj.rentOf(cell)}，买吗？`;
+        $("actions").appendChild(tip);
+        actionBtn(`买！(-¥${gj.priceOf(cell)})`, () => this.send({ t: "buy" }));
+        actionBtn("放弃", () => this.send({ t: "skip_buy" }));
+      } else if (aw.kind === "upgrade") {
+        const tip = document.createElement("div");
+        tip.textContent = `升级「${cell.name}」花 ¥${gj.upgradeCostOf(cell)}？`;
+        $("actions").appendChild(tip);
+        actionBtn(`升级！(-¥${gj.upgradeCostOf(cell)})`, () => this.send({ t: "upgrade" }));
+        actionBtn("算了", () => this.send({ t: "skip_upgrade" }));
+      } else if (aw.kind === "jail_choice") {
+        const tip = document.createElement("div");
+        tip.textContent = `🚔 你进了监狱！交保释金 ¥${BAIL_COST} 还是坐满 ${JAIL_TURNS} 回合？`;
+        $("actions").appendChild(tip);
+        actionBtn(`交保释金（-¥${BAIL_COST}）`, () => this.send({ t: "bail" }));
+        actionBtn(`坐牢（${JAIL_TURNS}回合）`, () => this.send({ t: "serve" }));
+      }
+    } else if (myTurn) {
+      $("turn-banner").textContent = `▶ 轮到你，${S.name}！`;
+      $("btn-roll").textContent = "🎲 掷骰子";
+      if (!S.myRolled) {
+        $("btn-roll").disabled = false;
+      } else if (r.lastDoubles) {
+        $("btn-roll").disabled = false;
+        $("btn-roll").textContent = "🎲 再掷一次！";
+      } else {
+        $("btn-roll").disabled = true;
+        actionBtn("⏭️ 结束回合", () => { S.myRolled = false; this.send({ t: "end_turn" }); });
+      }
+    } else {
+      const other = r.players.find(x => x.seat !== S.seat);
+      $("turn-banner").textContent = `⏳ 等待 ${other ? other.name : "对手"} 行动…`;
+      $("btn-roll").disabled = true;
+    }
+    // 骰子动画：lastDice 变化时滚动
+    const ld = r.lastDice;
+    if (ld && (!S.shownDice || S.shownDice[0] !== ld[0] || S.shownDice[1] !== ld[1])) {
+      S.shownDice = ld.slice();
+      tumbleDice(ld[0], ld[1]);
+    }
+  },
+  renderOver(gj) {
+    $("btn-roll").disabled = true; clearActions();
+    const w = gj.winner;
+    $("turn-banner").textContent = "🏁 游戏结束";
+    const ov = document.createElement("div"); ov.id = "gameover";
+    if (w === "draw") ov.textContent = "🤝 平局！";
+    else ov.textContent = w === S.seat ? "🎉 你赢了！世界属于你！" : "😭 对手获胜……";
+    $("actions").appendChild(ov);
+    actionBtn("🔄 回主页", () => location.reload());
+  },
+  onRoll() {
+    if (S.mode !== "multi" || !S.room) return;
+    const r = S.room;
+    if (S.myRolled && !r.lastDoubles) return;
+    S.myRolled = true;
+    $("btn-roll").disabled = true; // 防连点，状态回来后按服务器重算
+    this.send({ t: "roll" });
+  },
+  leave() {
+    this.send({ t: "leave" });
+    try { S.ws && S.ws.close(); } catch (e) {}
+    location.reload();
+  },
+};
+
+// ---------- 事件绑定 ----------
+buildAvatarPicker();
+$("btn-single").onclick = () => { readName(); SP.start(); };
+$("btn-create").onclick = () => { readName(); MP.connect(genCode(), true); };
+$("btn-join").onclick = () => {
+  const code = $("room-code-input").value.trim().toUpperCase();
+  if (!/^[A-Z0-9]{6}$/.test(code)) return toast("房号是 6 位字母数字");
+  readName(); MP.connect(code, false);
+};
+$("btn-start").onclick = () => MP.send({ t: "start" });
+$("btn-lobby-leave").onclick = () => MP.leave();
+$("btn-roll").onclick = () => { if (S.mode === "single") SP.onRoll(); else MP.onRoll(); };
+$("btn-leave-game").onclick = () => {
+  if (S.mode === "multi") MP.leave();
+  else location.reload();
+};
+</script>
+</body>
+</html>

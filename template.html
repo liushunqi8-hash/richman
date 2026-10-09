@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>大富翁 Richman · richman.liushunqi8.com</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: #14161c; color: #eee;
+         font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  #app { max-width: 1240px; margin: 0 auto; }
+  h1 { margin: 8px 0 0; font-size: 28px; }
+  #subtitle { color: #888; margin: 4px 0 16px; font-size: 13px; }
+  #wrap { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+  #board { display: grid; grid-template-columns: repeat(8, 1fr); gap: 5px;
+           flex: 1 1 620px; min-width: 340px; }
+  .cell { background: #1e2230; border: 2px solid #333a4d; border-radius: 8px;
+          padding: 5px 3px; min-height: 66px; text-align: center; }
+  .cname { font-size: 11px; font-weight: bold; }
+  .cinfo { font-size: 11px; color: #9fb3d8; margin-top: 2px; }
+  .tokens { margin-top: 4px; min-height: 22px; }
+  .token { display: inline-block; width: 22px; height: 22px; line-height: 22px;
+           border-radius: 50%; font-size: 12px; color: #fff; margin: 0 2px; }
+  #side { flex: 0 1 320px; min-width: 280px; }
+  .btn { display: inline-block; margin: 4px 6px 4px 0; padding: 10px 16px;
+         font-size: 15px; border: none; border-radius: 8px; cursor: pointer;
+         background: #2f6df6; color: #fff; }
+  .btn:disabled { background: #3a3f4d; color: #888; cursor: default; }
+  .btn:hover:not(:disabled) { background: #4a86ff; }
+  #actions { margin: 10px 0; min-height: 40px; font-size: 14px; }
+  #stats { display: flex; gap: 8px; margin: 10px 0; }
+  .pstat { flex: 1; background: #1e2230; border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+  .pstat b { font-size: 14px; }
+  #round { align-self: center; color: #888; font-size: 13px; }
+  h3 { margin: 12px 0 6px; font-size: 15px; }
+  #log { background: #0f1117; border-radius: 8px; padding: 10px; height: 300px;
+         overflow-y: auto; font-size: 13px; line-height: 1.7; }
+  #gameover { font-size: 17px; font-weight: bold; margin: 8px 0; }
+  #loading { color: #888; font-size: 14px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="loading">⏳ 正在加载 Python 引擎（Pyodide）……第一次稍慢，稍等几秒</div>
+</div>
+
+<script type="text/plain" id="game-py">
+{{GAME_PY}}
+</script>
+
+<script>
+const PYODIDE_BASES = [
+  "https://registry.npmmirror.com/pyodide/0.27.7/files/",
+  "https://cdn.jsdelivr.net/npm/pyodide@0.27.7/",
+  "https://unpkg.com/pyodide@0.27.7/"
+];
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("script load failed"));
+    document.head.appendChild(s);
+  });
+}
+
+async function main() {
+  const loadingEl = document.getElementById("loading");
+  let pyodide = null, lastErr = null;
+  for (const base of PYODIDE_BASES) {
+    try {
+      loadingEl.textContent = "⏳ 正在加载 Python 引擎（" + new URL(base).host + "）……第一次稍慢，稍等";
+      await loadScript(base + "pyodide.js");
+      pyodide = await loadPyodide({ indexURL: base });
+      break;
+    } catch (e) {
+      lastErr = e;
+      console.warn("Pyodide CDN 失败:", base, e);
+    }
+  }
+  if (!pyodide) {
+    loadingEl.textContent = "❌ 加载失败：" + (lastErr && lastErr.message || lastErr);
+    return;
+  }
+  try {
+    const code = document.getElementById("game-py").textContent;
+    loadingEl.remove();
+    await pyodide.runPythonAsync(code);
+  } catch (err) {
+    const app = document.getElementById("app");
+    app.innerHTML = "";
+    const d = document.createElement("div");
+    d.textContent = "❌ 游戏启动失败：" + err;
+    app.appendChild(d);
+    console.error(err);
+  }
+}
+main();
+</script>
+</body>
+</html>
