@@ -120,6 +120,10 @@
     <div id="lobby-players"></div>
     <p class="hint" id="lobby-hint">等待对手加入…</p>
     <button class="btn big" id="btn-start">▶ 开始游戏</button>
+    <div id="ai-row" style="margin:8px 0;display:none;gap:8px;justify-content:center">
+      <button class="btn" id="btn-add-ai">＋ 添加电脑</button>
+      <button class="btn ghost" id="btn-remove-ai">－ 移除电脑</button>
+    </div>
     <button class="btn ghost" id="btn-lobby-leave">离开房间</button>
   </section>
 
@@ -617,9 +621,14 @@ const MP = {
       box.appendChild(d);
     });
     const n = r ? r.players.length : 0;
+    const aiN = r ? r.players.filter(p => p.isAI).length : 0;
     const canStart = r && r.phase === "lobby" && n >= 2 && S.seat === 0;
     $("btn-start").disabled = !canStart;
-    $("lobby-hint").textContent = !r ? "连接中…" : n < 2 ? `等待玩家加入…（${n}/5）` : (S.seat === 0 ? `${n}/5 人已就位，点开始！（还能继续等）` : `等待房主开始…（${n}/5）`);
+    const isHost = S.seat === 0;
+    $("ai-row").style.display = (r && r.phase === "lobby" && isHost) ? "flex" : "none";
+    $("btn-add-ai").disabled = n >= 5;
+    $("btn-remove-ai").disabled = aiN === 0;
+    $("lobby-hint").textContent = !r ? "连接中…" : n < 2 ? `等待玩家加入…（${n}/5）` : (isHost ? `${n}/5 人已就位${aiN ? `（含${aiN}个电脑）` : ""}，点开始！（还能继续等）` : `等待房主开始…（${n}/5）`);
   },
   render() {
     const r = S.room;
@@ -737,6 +746,8 @@ $("btn-join").onclick = () => {
   readName(); MP.connect(code, false);
 };
 $("btn-start").onclick = () => MP.send({ t: "start" });
+$("btn-add-ai").onclick = () => MP.send({ t: "add_ai" });
+$("btn-remove-ai").onclick = () => MP.send({ t: "remove_ai" });
 $("btn-lobby-leave").onclick = () => MP.leave();
 $("btn-roll").onclick = () => { if (S.mode === "single") SP.onRoll(); else MP.onRoll(); };
 $("btn-leave-game").onclick = () => {

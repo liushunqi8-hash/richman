@@ -11,7 +11,7 @@ function publicRoom(room) {
   return {
     code: room.code,
     phase: room.phase,
-    players: room.players.map(p => ({ name: p.name, avatar: p.avatar, seat: p.seat, connected: p.connected })),
+    players: room.players.map(p => ({ name: p.name, avatar: p.avatar, seat: p.seat, connected: p.connected, isAI: !!p.isAI })),
     game: room.game,
     awaiting: room.awaiting,
     lastDice: room.lastDice || null,
@@ -42,10 +42,17 @@ export class GameRoom extends DurableObject {
     if (!room) room = { code, players: [], game: null, phase: "lobby", awaiting: null, createdAt: Date.now() };
     let me = room.players.find(p => p.id === pid);
     if (!me) {
-      if (room.players.length >= 5) return new Response("房间已满（最多5人）", { status: 403 });
       if (room.phase !== "lobby") return new Response("游戏已开始，无法加入", { status: 403 });
-      me = { id: pid, name, avatar, seat: room.players.length, connected: true };
-      room.players.push(me);
+      if (room.players.length >= 5) {
+        // 满员时用真人替换最后一个电脑
+        const aiIdx = room.players.map((p, i) => p.isAI ? i : -1).filter(i => i >= 0).pop();
+        if (aiIdx === undefined) return new Response("房间已满（最多5人）", { status: 403 });
+        me = { id: pid, name, avatar, seat: room.players[aiIdx].seat, connected: true };
+        room.players[aiIdx] = me;
+      } else {
+        me = { id: pid, name, avatar, seat: room.players.length, connected: true };
+        room.players.push(me);
+      }
     } else {
       me.connected = true; me.name = name; me.avatar = avatar;
     }
@@ -66,29 +73,25 @@ export class GameRoom extends DurableObject {
     for (const ws of this.ctx.getWebSockets()) {
       try { ws.send(msg); } catch (e) { /* ignore */ }
     }
-    // 断线托管闹钟：对局中每45秒检查一次
+    // 断线托管闹钟：对局中每20秒检查一次
     try {
-      if (room.phase === "playing") this.ctx.storage.setAlarm(Date.now() + 45000).catch(() => {});
+      if (room.phase === "playing") this.ctx.storage.setAlarm(Date.now() + 20000).catch(() => {});
       else this.ctx.storage.deleteAlarm().catch(() => {});
     } catch (e) { /* ignore */ }
   }
 
-  // 闹钟：轮到断线玩家且45秒无行动 → 简单托管代打
+  // 闹钟：轮到断线玩家且15秒无行动 → 简单托管代打
   async alarm() {
     const room = await this._load();
     if (!room || room.phase !== "playing" || !room.game) return;
     const g = Game.fromJSON(room.game);
     if (g.winner !== null) return;
     const me = room.players[g.turn];
-    if (!me || me.connected) return;
-    if (Date.now() - (room.lastActionAt || 0) < 40000) return;
-    this._autoTurn(room, g);
-    room.game = g.toJSON();
+    if (!me || me.connected || me.isAI) return;
+    if (Date.now() - (room.lastActionAt || 0) < 15000) return;
+    this._autoTurn(room, g, false);
     room.lastActionAt = Date.now();
-    room.awaiting = null;
-    if (g.winner !== null) room.phase = "over";
-    await this._save(room);
-    this._broadcast(room);
+    return this._pumpAI(room, g);
   }
 
   _autoDecide(g, seat, action, cell) {
@@ -97,9 +100,14 @@ export class GameRoom extends DurableObject {
     else if (action === "upgrade") { if (g.aiUpgrade(seat, cell)) g.upgrade(seat, cell); }
     else if (action === "jail_choice") { if (g.aiBail(seat)) g.payBail(seat); else g.serveJail(seat); }
   }
-  // 断线玩家的一回合：掷骰+简单决策，出局则跳过
-  _autoTurn(room, g) {
+  // 自动打一回合：断线托管(isAI=false) 或 电脑玩家(isAI=true，会用嫁祸卡)
+  _autoTurn(room, g, isAI) {
     const seat = g.turn;
+    // 电脑：回合开始先考虑嫁祸最富的对手
+    if (isAI && g.aiUseFrame(seat)) {
+      const foes = g.aliveSeats().filter(s => s !== seat).sort((a, b) => g.players[b].cash - g.players[a].cash);
+      if (foes.length) g.useFrame(seat, foes[0]);
+    }
     if (room.awaiting && room.awaiting.seat === seat) {
       const cell = g.cells[room.awaiting.cellIdx];
       this._autoDecide(g, seat, room.awaiting.kind, cell);
@@ -111,7 +119,7 @@ export class GameRoom extends DurableObject {
         if (g.autoSkip(seat)) break;
         const r = g.roll();
         const who = g.players[seat].name;
-        g.pushLog(`🎲 ${who}（断线托管）掷出 ${r.d1}、${r.d2}（${r.total}点）${r.doubles ? "双骰！再掷一次！" : ""}`);
+        g.pushLog(`🎲 ${who}${isAI ? "" : "（断线托管）"}掷出 ${r.d1}、${r.d2}（${r.total}点）${r.doubles ? "双骰！再掷一次！" : ""}`);
         const cell = g.movePlayer(seat, r.total);
         let res = g.resolveLanding(seat, cell);
         const wentJail = res.action === "jail_choice" || !!res.jailed;
@@ -128,6 +136,21 @@ export class GameRoom extends DurableObject {
       if (g.winner === null) g.nextTurn();
     }
     room.lastDoubles = false; room.rolled = false; room.lastDice = g.lastRoll;
+  }
+
+  // AI 连打：如果轮到电脑，立刻自动打完（含连续多个电脑）
+  async _pumpAI(room, g) {
+    let guard = 0;
+    while (g.winner === null && guard++ < 10) {
+      const me = room.players[g.turn];
+      if (!me || !me.isAI) break;
+      this._autoTurn(room, g, true);
+    }
+    room.game = g.toJSON();
+    room.awaiting = null;
+    if (g.winner !== null) room.phase = "over";
+    await this._save(room);
+    this._broadcast(room);
   }
 
   // 处理结算结果（支持连锁），设置 awaiting
@@ -173,17 +196,37 @@ export class GameRoom extends DurableObject {
       return this._broadcast(room);
     }
 
+    if (msg.t === "add_ai" || msg.t === "remove_ai") {
+      if (me.seat !== 0) return err("只有房主可以操作");
+      if (room.phase !== "lobby") return err("游戏已开始");
+      if (msg.t === "add_ai") {
+        if (room.players.length >= 5) return err("已满5人");
+        const n = room.players.filter(p => p.isAI).length;
+        room.players.push({ id: "ai-" + Date.now() + "-" + n, name: "🤖电脑" + (n + 1), avatar: "robot",
+          seat: room.players.length, connected: true, isAI: true });
+      } else {
+        const idx = room.players.map((p, i) => p.isAI ? i : -1).filter(i => i >= 0).pop();
+        if (idx === undefined) return err("没有电脑可移除");
+        room.players.splice(idx, 1);
+        room.players.forEach((p, i) => { p.seat = i; });
+      }
+      await this._save(room);
+      return this._broadcast(room);
+    }
+
     if (msg.t === "start") {
       if (me.seat !== 0) return err("只有房主可以开始");
       if (room.players.length < 2) return err("至少2人才能开始…");
       if (room.phase !== "lobby") return err("游戏已经开始");
       const g = new Game(undefined, room.players.length);
       room.players.forEach((p, i) => { g.players[i].name = p.name; });
-      g.pushLog(`🎲 游戏开始！${g.players[0].name} 先手。${room.players.length}人对战，经过起点 +¥${SALARY}，同国房产租金叠加，无限回合直到最后一人存活。`);
+      const aiN = room.players.filter(p => p.isAI).length;
+      const aiTxt = aiN ? `（含${aiN}个电脑）` : "";
+      g.pushLog(`🎲 游戏开始！${g.players[0].name} 先手。${room.players.length}人对战${aiTxt}，经过起点 +¥${SALARY}，同国房产租金叠加，无限回合直到最后一人存活。`);
       room.game = g.toJSON(); room.phase = "playing"; room.awaiting = null;
       room.lastDoubles = false; room.rolled = false; room.lastDice = null;
       await this._save(room);
-      return this._broadcast(room);
+      return this._pumpAI(room, g);
     }
 
     if (room.phase !== "playing" || !room.game) return err("游戏未开始");
@@ -258,11 +301,8 @@ export class GameRoom extends DurableObject {
       g.nextTurn();
       let guard = 0;
       while (g.winner === null && g.autoSkip(g.turn) && guard++ < 12) g.nextTurn();
-      room.game = g.toJSON();
       room.lastDoubles = false; room.rolled = false;
-      if (g.winner !== null) room.phase = "over";
-      await this._save(room);
-      return this._broadcast(room);
+      return this._pumpAI(room, g);
     }
   }
 
