@@ -71,9 +71,11 @@
   #turn-banner { font-size: 15px; font-weight: bold; margin: 4px 0; min-height: 22px; }
   #dice { font-size: 40px; margin-left: 12px; vertical-align: middle; letter-spacing: 4px; }
   #actions { margin: 10px 0; min-height: 40px; font-size: 14px; }
-  #stats { display: flex; gap: 8px; margin: 10px 0; }
-  .pstat { flex: 1; background: #1e2230; border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+  #stats { display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap; align-items: flex-start; }
+  .pstat { flex: 1; min-width: 170px; background: #1e2230; border-radius: 8px; padding: 8px 10px; font-size: 13px; }
   .pstat img { width: 30px; height: 30px; border-radius: 8px; vertical-align: middle; margin-right: 6px; object-fit: cover; }
+  .srow { display: flex; justify-content: space-between; gap: 10px; white-space: nowrap; line-height: 1.7; }
+  .srow .sk { color: #9fb3d8; } .srow .sv { color: #fff; }
   #round { align-self: center; color: #888; font-size: 13px; }
   h3 { margin: 12px 0 6px; font-size: 15px; }
   #log { background: #0f1117; border-radius: 8px; padding: 10px; height: 300px;
@@ -298,7 +300,12 @@ function renderStats(gj, avatarOf, names) {
     if (itemStr) rows.push(["道具", itemStr]);
     const buffStr = [p.boost > 0 ? "⛽加速" : "", p.insured ? `🏦保险(${p.insured.turns}步)` : ""].filter(Boolean).join(" ");
     if (buffStr) rows.push(["增益", buffStr]);
-    rows.forEach(([k, v]) => { const r = document.createElement("div"); r.textContent = `${k}：${v}`; d.appendChild(r); });
+    rows.forEach(([k, v]) => {
+      const r = document.createElement("div"); r.className = "srow";
+      const sk = document.createElement("span"); sk.className = "sk"; sk.textContent = k;
+      const sv = document.createElement("span"); sv.className = "sv"; sv.textContent = v;
+      r.appendChild(sk); r.appendChild(sv); d.appendChild(r);
+    });
     s.appendChild(d);
   });
   const rd = document.createElement("div"); rd.id = "round";
