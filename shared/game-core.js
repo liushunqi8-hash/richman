@@ -5,7 +5,7 @@
 export const BOARD_SIZE = 28;
 export const GRID_N = 8;
 export const START_CASH = 30000;
-export const SALARY = 1000;
+export const SALARY = 5000;
 export const JAIL_TURNS = 2;
 export const BAIL_COST = 4800;
 export const HOSPITAL_FEE = 4800;
@@ -16,10 +16,10 @@ export const HUB_BUILDINGS = {
   hotel:     { name: "旅馆",   emoji: "🏨", cost: 8000,  toll: 3000, desc: "对手强制停留3天" },
   park:      { name: "公园",   emoji: "🏞️", cost: 8000,  toll: 0,    desc: "名下房产租金+30%" },
   gas:       { name: "加油站", emoji: "⛽", cost: 10000, toll: 5000, desc: "对手下次掷骰+2" },
-  insurance: { name: "保险公司", emoji: "🏦", cost: 10000, toll: 6000, desc: "对手3步内出事赔¥8000" },
+  insurance: { name: "保险公司", emoji: "🏦", cost: 10000, toll: 10000, desc: "对手3步内出事赔¥12000" },
 };
 export const PARK_RENT_BONUS = 0.3;
-export const INSURANCE_PAYOUT = 8000;
+export const INSURANCE_PAYOUT = 12000;
 export const INSURANCE_TURNS = 3;
 export const HOTEL_STAY = 3;
 export const GAS_BOOST = 2;

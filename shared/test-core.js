@@ -308,8 +308,8 @@ console.log("机会新卡 ✓");
   g.players[0].pos = 26;
   const before = g.players[0].cash;
   g.movePlayer(0, 5);
-  ok(g.players[0].cash === before + 1000, "过起点+1000");
-  ok(SALARY === 1000, "SALARY常量=1000");
+  ok(g.players[0].cash === before + 5000, "过起点+5000");
+  ok(SALARY === 5000, "SALARY常量=5000");
 }
 console.log("起点工资 ✓");
 console.log(`全部通过（${pass}断言）`);
