@@ -76,7 +76,7 @@ export const BOARD_DEF = [
 ];
 
 const CHANCE_KEYS = ["bonus", "fine", "forward", "back", "lottery", "robbed", "jail_free", "frame", "medicine"];
-const CHANCE_WEIGHTS = [3, 3, 2, 2, 1, 1, 1, 1, 1];
+const CHANCE_WEIGHTS = [3, 3, 2, 2, 1, 1, 2, 2, 2];
 
 // 确定性 RNG（测试用），线上用 Date.now() 做种子
 export function mulberry32(seed) {
